@@ -8,6 +8,33 @@ def inline_keyboard(rows: list[list[dict]]) -> dict:
     return {"one_time": False, "inline": True, "buttons": rows}
 
 
+def main_keyboard() -> dict:
+    return {
+        "one_time": False,
+        "inline": False,
+        "buttons": [
+            [
+                text_button("Меню", "primary"),
+                text_button("Активные", "secondary"),
+            ],
+            [
+                text_button("Стопы", "secondary"),
+            ],
+        ],
+    }
+
+
+def text_button(label: str, color: str = "secondary") -> dict:
+    return {
+        "action": {
+            "type": "text",
+            "label": label,
+            "payload": {"button": label.lower()},
+        },
+        "color": color,
+    }
+
+
 def callback_button(label: str, payload: dict, color: str = "secondary") -> dict:
     return {
         "action": {

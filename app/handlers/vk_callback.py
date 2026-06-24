@@ -18,10 +18,11 @@ from app.models.order import Order
 from app.repositories import events as events_repo
 from app.repositories import orders as orders_repo
 from app.repositories import stops as stops_repo
+from app.repositories import user_modes
 from app.repositories import users as users_repo
 from app.services.dispatch import broadcast_to_active_staff, notify_waiter_ready, refresh_kitchen_order_messages, send_order_to_kitchen
 from app.services.excel_export import create_export_file, parse_export_period
-from app.services.keyboards import confirm_order_keyboard, menu_keyboard
+from app.services.keyboards import confirm_order_keyboard, main_keyboard
 from app.services.parser import parse_order_text, render_parsed_order
 from app.services.permissions import (
     can_cancel_order,
@@ -96,27 +97,47 @@ async def _handle_message_new(request: Request, payload: dict, session: AsyncSes
         await vk.send_message(peer_id, f"Доступ пока не открыт.\nВаш VK ID: {from_id}\nПередайте его администратору.")
         return
 
-    if command == "/menu":
-        await vk.send_message(peer_id, _menu_text(user), keyboard=menu_keyboard(user.role))
+    button_action = _button_action(text)
+    if button_action == "menu":
+        await user_modes.clear_mode(session, user.id)
+        await vk.send_message(peer_id, _menu_text(user), keyboard=main_keyboard())
+    elif button_action == "orders":
+        await user_modes.clear_mode(session, user.id)
+        await _cmd_orders(session, settings, vk, peer_id, user)
+    elif button_action == "stops":
+        await _cmd_stops(session, settings, vk, peer_id, user, [], enter_mode=True)
+    elif command == "/menu":
+        await user_modes.clear_mode(session, user.id)
+        await vk.send_message(peer_id, _menu_text(user), keyboard=main_keyboard())
     elif command == "/add":
+        await user_modes.clear_mode(session, user.id)
         await _cmd_add(session, vk, peer_id, user, args)
     elif command == "/remove":
+        await user_modes.clear_mode(session, user.id)
         await _cmd_remove(session, vk, peer_id, user, args)
     elif command == "/users":
+        await user_modes.clear_mode(session, user.id)
         await _cmd_users(session, vk, peer_id, user)
     elif command == "/orders":
+        await user_modes.clear_mode(session, user.id)
         await _cmd_orders(session, settings, vk, peer_id, user)
     elif command == "/done":
+        await user_modes.clear_mode(session, user.id)
         await _cmd_done(session, settings, vk, peer_id, user)
     elif command == "/export":
+        await user_modes.clear_mode(session, user.id)
         await _cmd_export(request, session, settings, vk, peer_id, user, args)
     elif command == "/stats":
+        await user_modes.clear_mode(session, user.id)
         await _cmd_stats(session, settings, vk, peer_id, user, args)
     elif command in {"/stops", "/stop"}:
-        await _cmd_stops(session, settings, vk, peer_id, user, args)
+        await _cmd_stops(session, settings, vk, peer_id, user, args, enter_mode=True)
     elif command and command.startswith("/"):
         await vk.send_message(peer_id, "Не знаю такую команду. Напишите /menu.")
     else:
+        if await user_modes.get_mode(session, user.id) == user_modes.MODE_STOPS:
+            await _create_stop_from_text(session, settings, vk, peer_id, user, text)
+            return
         await _handle_root_text(session, settings, vk, peer_id, user, text)
 
 
@@ -134,12 +155,15 @@ async def _handle_message_event(request: Request, payload: dict, session: AsyncS
         return
 
     if action == "show_orders":
+        await user_modes.clear_mode(session, user.id)
         await _cmd_orders(session, settings, vk, peer_id, user)
     elif action == "show_done":
+        await user_modes.clear_mode(session, user.id)
         await _cmd_done(session, settings, vk, peer_id, user)
     elif action == "show_stops":
-        await _cmd_stops(session, settings, vk, peer_id, user, [])
+        await _cmd_stops(session, settings, vk, peer_id, user, [], enter_mode=True)
     elif action == "show_users":
+        await user_modes.clear_mode(session, user.id)
         await _cmd_users(session, vk, peer_id, user)
     elif action == "help_new_order":
         await vk.send_message(peer_id, "Отправьте заказ обычным текстом, например:\nСтол 4\nборщ 2\nпаста 1\nкомм: без лука")
@@ -163,12 +187,13 @@ async def _handle_message_event(request: Request, payload: dict, session: AsyncS
 
 async def _cmd_start(session: AsyncSession, settings: Settings, vk: VKClient, from_id: int, peer_id: int, user) -> None:
     if user and is_active(user):
-        await vk.send_message(peer_id, _menu_text(user), keyboard=menu_keyboard(user.role))
+        await user_modes.clear_mode(session, user.id)
+        await vk.send_message(peer_id, _menu_text(user), keyboard=main_keyboard())
         return
 
     if settings.superadmin_vk_id and from_id == settings.superadmin_vk_id:
         user = await users_repo.ensure_superadmin(session, from_id)
-        await vk.send_message(peer_id, "Вы подключены как первый администратор.", keyboard=menu_keyboard(user.role))
+        await vk.send_message(peer_id, "Вы подключены как первый администратор.", keyboard=main_keyboard())
         return
 
     await vk.send_message(peer_id, f"Бот видит ваш VK ID: {from_id}\nПередайте его администратору для добавления.")
@@ -208,7 +233,7 @@ async def _cmd_users(session: AsyncSession, vk: VKClient, peer_id: int, actor) -
 
 async def _cmd_orders(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor) -> None:
     orders = await orders_repo.list_active_orders(session, actor)
-    await vk.send_message(peer_id, active_orders_list(orders))
+    await vk.send_message(peer_id, active_orders_list(orders), keyboard=main_keyboard())
 
 
 async def _cmd_done(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor) -> None:
@@ -248,17 +273,42 @@ async def _cmd_stats(session: AsyncSession, settings: Settings, vk: VKClient, pe
     await vk.send_message(peer_id, f"Заказы: {len(orders)}\nСредняя выдача: {avg_minutes} мин\nСамый долгий заказ: {longest_text}")
 
 
-async def _cmd_stops(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, args: list[str]) -> None:
+async def _cmd_stops(
+    session: AsyncSession,
+    settings: Settings,
+    vk: VKClient,
+    peer_id: int,
+    actor,
+    args: list[str],
+    enter_mode: bool = False,
+) -> None:
     if not can_use_stops(actor):
         await vk.send_message(peer_id, "Стоп-лист доступен только активным сотрудникам.")
         return
     text = " ".join(args).strip()
     if text:
-        stop = await stops_repo.create_stop_message(session, actor, text, settings.stops_ttl_hours)
-        author = actor.display_name or str(actor.vk_user_id)
-        await broadcast_to_active_staff(session, vk, f"Стоп-лист • {author}\n{stop.text}")
+        if enter_mode:
+            await user_modes.set_mode(session, actor.id, user_modes.MODE_STOPS)
+        await _create_stop_from_text(session, settings, vk, peer_id, actor, text)
         return
-    await vk.send_message(peer_id, stops_list(await stops_repo.list_active_stops(session), settings.app_timezone))
+    if enter_mode:
+        await user_modes.set_mode(session, actor.id, user_modes.MODE_STOPS)
+    await vk.send_message(
+        peer_id,
+        _stops_mode_text(await stops_repo.list_active_stops(session), settings.app_timezone),
+        keyboard=main_keyboard(),
+    )
+
+
+async def _create_stop_from_text(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, text: str) -> None:
+    stop = await stops_repo.create_stop_message(session, actor, text, settings.stops_ttl_hours)
+    author = actor.display_name or str(actor.vk_user_id)
+    await broadcast_to_active_staff(session, vk, f"Стоп-лист • {author}\n{stop.text}", exclude_vk_id=actor.vk_user_id)
+    await vk.send_message(
+        peer_id,
+        "Стоп добавлен. Можно написать следующий стоп или нажать Меню, чтобы выйти из стопов.",
+        keyboard=main_keyboard(),
+    )
 
 
 async def _handle_root_text(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, text: str) -> None:
@@ -335,7 +385,32 @@ def _split_command(text: str) -> tuple[str | None, list[str]]:
 
 
 def _menu_text(user) -> str:
-    return f"Меню. Ваша роль: {user.role}."
+    return (
+        f"Меню. Ваша роль: {user.role}.\n\n"
+        "Новый заказ отправляйте обычным текстом:\n"
+        "Стол 4\nборщ 2\nпаста 1\nкомм: без лука\n\n"
+        "Для стоп-листа нажмите Стопы и напишите стоп обычным текстом."
+    )
+
+
+def _button_action(text: str) -> str | None:
+    normalized = text.strip().lower()
+    if normalized in {"меню", "menu"}:
+        return "menu"
+    if normalized in {"активные", "заказы", "активные заказы", "orders"}:
+        return "orders"
+    if normalized in {"стопы", "стоп", "stops", "stop"}:
+        return "stops"
+    return None
+
+
+def _stops_mode_text(stops: list, timezone_name: str) -> str:
+    return (
+        f"{stops_list(stops, timezone_name)}\n\n"
+        "Вы в разделе Стопы. Теперь просто напишите текст стопа обычным сообщением.\n"
+        "Например: нет борща до 18:00\n\n"
+        "Чтобы выйти, нажмите Меню или Активные."
+    )
 
 
 def _event_key(payload: dict) -> str:
