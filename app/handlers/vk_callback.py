@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import Settings, get_settings
 from app.db import get_session
-from app.models.constants import ORDER_READY
+from app.models.constants import ORDER_READY, ROLE_ADMIN
 from app.models.order import Order
 from app.repositories import events as events_repo
 from app.repositories import orders as orders_repo
@@ -109,6 +109,8 @@ async def _handle_message_new(request: Request, payload: dict, session: AsyncSes
     elif command == "/menu":
         await user_modes.clear_mode(session, user.id)
         await vk.send_message(peer_id, _menu_text(user), keyboard=main_keyboard())
+    elif command == "/help":
+        await vk.send_message(peer_id, _help_text(user), keyboard=main_keyboard())
     elif command == "/add":
         await user_modes.clear_mode(session, user.id)
         await _cmd_add(session, vk, peer_id, user, args)
@@ -188,12 +190,12 @@ async def _handle_message_event(request: Request, payload: dict, session: AsyncS
 async def _cmd_start(session: AsyncSession, settings: Settings, vk: VKClient, from_id: int, peer_id: int, user) -> None:
     if user and is_active(user):
         await user_modes.clear_mode(session, user.id)
-        await vk.send_message(peer_id, _menu_text(user), keyboard=main_keyboard())
+        await vk.send_message(peer_id, _help_text(user), keyboard=main_keyboard())
         return
 
     if settings.superadmin_vk_id and from_id == settings.superadmin_vk_id:
         user = await users_repo.ensure_superadmin(session, from_id)
-        await vk.send_message(peer_id, "Вы подключены как первый администратор.", keyboard=main_keyboard())
+        await vk.send_message(peer_id, f"Вы подключены как первый администратор.\n\n{_help_text(user)}", keyboard=main_keyboard())
         return
 
     await vk.send_message(peer_id, f"Бот видит ваш VK ID: {from_id}\nПередайте его администратору для добавления.")
@@ -315,6 +317,7 @@ async def _handle_root_text(session: AsyncSession, settings: Settings, vk: VKCli
     parsed = parse_order_text(text)
     if parsed.has_items and can_create_order(actor):
         order = await orders_repo.create_order(session, actor, parsed, text)
+        await _notify_admins_raw_order(session, vk, actor, order, text)
         if settings.auto_send_orders:
             await send_order_to_kitchen(session, vk, settings, order, actor)
             await vk.send_message(peer_id, f"Заказ #{order.order_no} отправлен на кухню.")
@@ -323,7 +326,8 @@ async def _handle_root_text(session: AsyncSession, settings: Settings, vk: VKCli
         return
 
     author = actor.display_name or str(actor.vk_user_id)
-    await broadcast_to_active_staff(session, vk, f"Общее сообщение • {author}\n{text}")
+    await _notify_admins_raw_text(session, vk, actor, f"Сообщение • {author}\n{text}")
+    await vk.send_message(peer_id, "Сообщение передано администраторам.", keyboard=main_keyboard())
 
 
 async def _event_send_order(session: AsyncSession, settings: Settings, vk: VKClient, actor, payload: dict) -> None:
@@ -385,12 +389,35 @@ def _split_command(text: str) -> tuple[str | None, list[str]]:
 
 
 def _menu_text(user) -> str:
+    return f"Меню. Ваша роль: {user.role}.\nВыберите действие кнопками ниже."
+
+
+def _help_text(user) -> str:
     return (
-        f"Меню. Ваша роль: {user.role}.\n\n"
-        "Новый заказ отправляйте обычным текстом:\n"
+        f"Ваша роль: {user.role}.\n\n"
+        "Как внести заказ:\n"
         "Стол 4\nборщ 2\nпаста 1\nкомм: без лука\n\n"
-        "Для стоп-листа нажмите Стопы и напишите стоп обычным текстом."
+        "Чтобы добавить стоп, нажмите Стопы и напишите текст обычным сообщением.\n"
+        "Команда /help покажет эту подсказку снова."
     )
+
+
+async def _notify_admins_raw_order(session: AsyncSession, vk: VKClient, actor, order, raw_text: str) -> None:
+    author = actor.display_name or str(actor.vk_user_id)
+    await _notify_admins_raw_text(
+        session,
+        vk,
+        actor,
+        f"Исходный текст заказа #{order.order_no} • {author}\n{raw_text}",
+    )
+
+
+async def _notify_admins_raw_text(session: AsyncSession, vk: VKClient, actor, text: str) -> None:
+    admins = await users_repo.list_active_by_roles(session, {ROLE_ADMIN})
+    for admin in admins:
+        if admin.vk_user_id == actor.vk_user_id:
+            continue
+        await vk.send_message(admin.vk_user_id, text)
 
 
 def _button_action(text: str) -> str | None:
