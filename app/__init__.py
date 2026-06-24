@@ -1,0 +1,2 @@
+"""Kitchen VK bot backend."""
+
