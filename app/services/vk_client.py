@@ -29,12 +29,24 @@ class VKClient:
             params["attachment"] = attachment
         return await self._method("messages.send", params)
 
-    async def edit_message(self, peer_id: int, conversation_message_id: int, message: str, keyboard: dict | None = None) -> dict[str, Any]:
+    async def edit_message(
+        self,
+        peer_id: int,
+        message: str,
+        keyboard: dict | None = None,
+        conversation_message_id: int | None = None,
+        message_id: int | None = None,
+    ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "peer_id": peer_id,
-            "conversation_message_id": conversation_message_id,
             "message": message,
         }
+        if conversation_message_id:
+            params["conversation_message_id"] = conversation_message_id
+        elif message_id:
+            params["message_id"] = message_id
+        else:
+            raise ValueError("conversation_message_id or message_id is required")
         if keyboard:
             params["keyboard"] = json.dumps(keyboard, ensure_ascii=False)
         return await self._method("messages.edit", params)

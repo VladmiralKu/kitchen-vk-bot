@@ -3,9 +3,11 @@ from decimal import Decimal, InvalidOperation
 import re
 
 
-POSITION_RE = re.compile(r"^(\d+(?:[\.,]\d+)?)\s+(.+)$")
+LEADING_QUANTITY_RE = re.compile(r"^(\d+(?:[\.,]\d+)?)\s+(.+)$")
+TRAILING_QUANTITY_RE = re.compile(r"^(.+?)\s+(\d+(?:[\.,]\d+)?)$")
 TABLE_RE = re.compile(r"^(?:стол|table)\s*[:#№-]?\s*(.+)$", re.IGNORECASE)
-COMMENT_PREFIX_RE = re.compile(r"^(?:комментарий|comment)\s*:\s*(.*)$", re.IGNORECASE)
+COMMENT_PREFIX_RE = re.compile(r"^(?:комм|комментарий|comment)\s*:?\s*(.*)$", re.IGNORECASE)
+COMMENT_HINT_RE = re.compile(r"^(?:без|не|no)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -32,8 +34,13 @@ def parse_order_text(text: str) -> ParsedOrder:
     table_number: str | None = None
     items: list[ParsedItem] = []
     comment_lines: list[str] = []
+    in_comment = False
 
     for index, line in enumerate(lines):
+        if in_comment:
+            comment_lines.append(line)
+            continue
+
         table_match = TABLE_RE.match(line)
         if table_match and table_number is None:
             table_number = table_match.group(1).strip()
@@ -43,19 +50,25 @@ def parse_order_text(text: str) -> ParsedOrder:
             table_number = line
             continue
 
-        item_match = POSITION_RE.match(line)
-        if item_match:
-            quantity_raw, name = item_match.groups()
-            quantity = _parse_quantity(quantity_raw)
-            if quantity is not None and name.strip():
-                items.append(ParsedItem(quantity=quantity, name=name.strip()))
-                continue
-
         comment_match = COMMENT_PREFIX_RE.match(line)
         if comment_match:
             value = comment_match.group(1).strip()
             if value:
                 comment_lines.append(value)
+            in_comment = True
+            continue
+
+        parsed_item = _parse_item_line(line)
+        if parsed_item:
+            items.append(parsed_item)
+            continue
+
+        if COMMENT_HINT_RE.match(line):
+            comment_lines.append(line)
+            continue
+
+        if _looks_like_order_context(lines, index, table_number, items):
+            items.append(ParsedItem(quantity=Decimal("1"), name=line))
             continue
 
         comment_lines.append(line)
@@ -73,9 +86,39 @@ def format_quantity(quantity: Decimal) -> str:
 
 def render_parsed_order(parsed: ParsedOrder) -> str:
     table = parsed.table_number or "не указан"
-    item_lines = "\n".join(f"• {format_quantity(item.quantity)} {item.name}" for item in parsed.items)
+    item_lines = "\n".join(f"• {format_item(item.name, item.quantity)}" for item in parsed.items)
     comment = parsed.comment or "нет"
-    return f"Стол: {table}\n\nПозиции:\n{item_lines}\n\nКомментарий:\n{comment}"
+    return f"Стол: {table}\n\nПозиции:\n{item_lines}\n\nКомм:\n{comment}"
+
+
+def format_item(name: str, quantity: Decimal) -> str:
+    return f"{name} {format_quantity(quantity)}"
+
+
+def _parse_item_line(line: str) -> ParsedItem | None:
+    trailing_match = TRAILING_QUANTITY_RE.match(line)
+    if trailing_match:
+        name, quantity_raw = trailing_match.groups()
+        quantity = _parse_quantity(quantity_raw)
+        if quantity is not None and name.strip():
+            return ParsedItem(quantity=quantity, name=name.strip())
+
+    leading_match = LEADING_QUANTITY_RE.match(line)
+    if leading_match:
+        quantity_raw, name = leading_match.groups()
+        quantity = _parse_quantity(quantity_raw)
+        if quantity is not None and name.strip():
+            return ParsedItem(quantity=quantity, name=name.strip())
+    return None
+
+
+def _looks_like_order_context(lines: list[str], index: int, table_number: str | None, items: list[ParsedItem]) -> bool:
+    if table_number or items:
+        return True
+    if len(lines) <= 1:
+        return False
+    remaining_lines = lines[index + 1 :]
+    return any(_parse_item_line(candidate) is not None or TABLE_RE.match(candidate) for candidate in remaining_lines)
 
 
 def _parse_quantity(raw: str) -> Decimal | None:

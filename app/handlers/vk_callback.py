@@ -32,7 +32,7 @@ from app.services.permissions import (
     can_use_stops,
     is_active,
 )
-from app.services.rendering import orders_list, stops_list, users_list
+from app.services.rendering import active_orders_list, orders_list, stops_list, users_list
 from app.services.vk_client import VKClient
 
 logger = logging.getLogger(__name__)
@@ -142,7 +142,7 @@ async def _handle_message_event(request: Request, payload: dict, session: AsyncS
     elif action == "show_users":
         await _cmd_users(session, vk, peer_id, user)
     elif action == "help_new_order":
-        await vk.send_message(peer_id, "Отправьте заказ обычным текстом, например:\nСтол 4\n2 борщ\n1 паста\nКомментарий: без лука")
+        await vk.send_message(peer_id, "Отправьте заказ обычным текстом, например:\nСтол 4\nборщ 2\nпаста 1\nкомм: без лука")
     elif action == "export_orders":
         await _cmd_export(request, session, settings, vk, peer_id, user, [action_payload.get("period", "today")])
     elif action == "send_order_to_kitchen":
@@ -208,7 +208,7 @@ async def _cmd_users(session: AsyncSession, vk: VKClient, peer_id: int, actor) -
 
 async def _cmd_orders(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor) -> None:
     orders = await orders_repo.list_active_orders(session, actor)
-    await vk.send_message(peer_id, orders_list("Активные заказы", orders, settings.app_timezone))
+    await vk.send_message(peer_id, active_orders_list(orders))
 
 
 async def _cmd_done(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor) -> None:

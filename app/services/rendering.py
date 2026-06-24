@@ -2,7 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.models.constants import ITEM_READY
-from app.services.parser import format_quantity
+from app.services.parser import format_item, format_quantity
 
 
 def order_for_kitchen(order, timezone_name: str) -> str:
@@ -14,9 +14,9 @@ def order_for_kitchen(order, timezone_name: str) -> str:
     ]
     for item in order.items:
         mark = "готово" if item.status == ITEM_READY else "не готово"
-        lines.append(f"[{mark}] {format_quantity(item.quantity)} {item.name}")
+        lines.append(f"[{mark}] {format_item(item.name, item.quantity)}")
     if order.comment:
-        lines.extend(["", f"Комментарий: {order.comment}"])
+        lines.extend(["", f"Комм: {order.comment}"])
     return "\n".join(lines)
 
 
@@ -26,9 +26,9 @@ def order_for_waiter(order, timezone_name: str) -> str:
         f"Стол: {order.table_number or '-'}",
         "",
     ]
-    lines.extend(f"• {format_quantity(item.quantity)} {item.name}" for item in order.items)
+    lines.extend(f"• {format_item(item.name, item.quantity)}" for item in order.items)
     if order.comment:
-        lines.extend(["", f"Комментарий: {order.comment}"])
+        lines.extend(["", f"Комм: {order.comment}"])
     return "\n".join(lines)
 
 
@@ -50,6 +50,27 @@ def orders_list(title: str, orders: list, timezone_name: str) -> str:
         if order.total_ready_seconds:
             lines.append(f"Время выдачи: {round(order.total_ready_seconds / 60, 1)} мин")
         lines.append("")
+    return "\n".join(lines).strip()
+
+
+def active_orders_list(orders: list) -> str:
+    title = "Активные заказы"
+    if not orders:
+        return f"{title}\n\nПока пусто."
+
+    lines = [title, ""]
+    visible_count = 0
+    for order in orders:
+        pending_items = [item for item in order.items if item.status != ITEM_READY]
+        if not pending_items:
+            continue
+        visible_count += 1
+        lines.append(f"Заказ #{order.order_no}")
+        lines.extend(f"❌ {format_item(item.name, item.quantity)}" for item in pending_items)
+        lines.append("")
+
+    if visible_count == 0:
+        return f"{title}\n\nПока пусто."
     return "\n".join(lines).strip()
 
 

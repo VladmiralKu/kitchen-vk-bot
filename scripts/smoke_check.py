@@ -19,7 +19,7 @@ class UserStub:
 
 
 def main() -> None:
-    parsed = parse_order_text("Стол 4\n2 борщ\n1 паста\nКомментарий: без лука")
+    parsed = parse_order_text("Стол 4\nборщ 2\nпаста 1\nкомм: без лука")
     assert parsed.table_number == "4"
     assert parsed.items[0].quantity == Decimal("2")
     assert parsed.comment == "без лука"
@@ -37,7 +37,7 @@ def main() -> None:
                     "status": "ready",
                     "table_number": "4",
                     "waiter_name": "Иван",
-                    "raw_text": "2 борщ",
+                    "raw_text": "борщ 2",
                     "comment": None,
                     "created_at": datetime(2026, 6, 24, 10, 0, tzinfo=timezone.utc),
                     "ready_at": datetime(2026, 6, 24, 10, 10, tzinfo=timezone.utc),

@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 
 from app.models.constants import ITEM_READY, ROLE_ADMIN, ROLE_COOK, ROLE_WAITER
-from app.services.parser import format_quantity
+from app.services.parser import format_item
 
 
 def inline_keyboard(rows: list[list[dict]]) -> dict:
@@ -35,7 +35,7 @@ def kitchen_order_keyboard(order_id: str, items: Iterable, include_cancel: bool 
     for item in items:
         mark = "готово" if item.status == ITEM_READY else "не готово"
         color = "positive" if item.status == ITEM_READY else "secondary"
-        label = f"{mark}: {format_quantity(item.quantity)} {item.name}"
+        label = f"{mark}: {format_item(item.name, item.quantity)}"
         rows.append([callback_button(label, {"action": "toggle_item_ready", "order_id": order_id, "item_id": item.id}, color)])
 
     rows.append([callback_button("Готово всё", {"action": "mark_order_ready", "order_id": order_id}, "positive")])

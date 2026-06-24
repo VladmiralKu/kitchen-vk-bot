@@ -49,8 +49,14 @@ async def refresh_kitchen_order_messages(session: AsyncSession, vk: VKClient, se
     text = order_for_kitchen(order, settings.app_timezone)
     keyboard = kitchen_order_keyboard(order.id, order.items)
     for message in messages:
-        if message.conversation_message_id:
-            await vk.edit_message(message.peer_id, message.conversation_message_id, text, keyboard=keyboard)
+        if message.conversation_message_id or message.message_id:
+            await vk.edit_message(
+                peer_id=message.peer_id,
+                message=text,
+                keyboard=keyboard,
+                conversation_message_id=message.conversation_message_id,
+                message_id=message.message_id,
+            )
         else:
             await vk.send_message(message.peer_id, text, keyboard=keyboard)
 
