@@ -100,7 +100,6 @@ async def _handle_message_new(request: Request, payload: dict, session: AsyncSes
     button_action = _button_action(text)
     if button_action == "menu":
         await user_modes.clear_mode(session, user.id)
-        await vk.send_message(peer_id, _menu_text(user), keyboard=main_keyboard())
     elif button_action == "orders":
         await user_modes.clear_mode(session, user.id)
         await _cmd_orders(session, settings, vk, peer_id, user)
@@ -108,7 +107,6 @@ async def _handle_message_new(request: Request, payload: dict, session: AsyncSes
         await _cmd_stops(session, settings, vk, peer_id, user, [], enter_mode=True)
     elif command == "/menu":
         await user_modes.clear_mode(session, user.id)
-        await vk.send_message(peer_id, _menu_text(user), keyboard=main_keyboard())
     elif command == "/help":
         await vk.send_message(peer_id, _help_text(user), keyboard=main_keyboard())
     elif command == "/add":
