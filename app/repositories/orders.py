@@ -53,6 +53,15 @@ async def get_order(session: AsyncSession, order_id: str) -> Order | None:
     return result.scalar_one_or_none()
 
 
+async def get_order_by_no(session: AsyncSession, order_no: int) -> Order | None:
+    result = await session.execute(
+        select(Order)
+        .options(selectinload(Order.items), selectinload(Order.waiter))
+        .where(Order.order_no == order_no)
+    )
+    return result.scalar_one_or_none()
+
+
 async def list_active_orders(session: AsyncSession, user: User, limit: int = 20) -> list[Order]:
     query = (
         select(Order)

@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import Settings, get_settings
 from app.db import get_session
-from app.models.constants import ORDER_READY, ROLE_ADMIN
+from app.models.constants import ORDER_CANCELLED, ORDER_READY, ROLE_ADMIN
 from app.models.order import Order
 from app.repositories import events as events_repo
 from app.repositories import orders as orders_repo
@@ -126,6 +126,9 @@ async def _handle_message_new(request: Request, payload: dict, session: AsyncSes
     elif command == "/done":
         await user_modes.clear_mode(session, user.id)
         await _cmd_done(session, settings, vk, peer_id, user)
+    elif command == "/cancel":
+        await user_modes.clear_mode(session, user.id)
+        await _cmd_cancel(session, vk, peer_id, user, args)
     elif command == "/export":
         await user_modes.clear_mode(session, user.id)
         await _cmd_export(request, session, settings, vk, peer_id, user, args)
@@ -243,6 +246,27 @@ async def _cmd_done(session: AsyncSession, settings: Settings, vk: VKClient, pee
     await vk.send_message(peer_id, orders_list("Выполненные заказы", orders, settings.app_timezone))
 
 
+async def _cmd_cancel(session: AsyncSession, vk: VKClient, peer_id: int, actor, args: list[str]) -> None:
+    if not can_cancel_order(actor):
+        await vk.send_message(peer_id, "Отменять заказы может только админ.")
+        return
+    if len(args) != 1 or not args[0].isdigit():
+        await vk.send_message(peer_id, "Формат: /cancel <номер заказа>\nНапример: /cancel 3")
+        return
+
+    order_no = int(args[0])
+    order = await orders_repo.get_order_by_no(session, order_no)
+    if not order:
+        await vk.send_message(peer_id, f"Заказ #{order_no} не найден.")
+        return
+    if order.status == ORDER_CANCELLED:
+        await vk.send_message(peer_id, f"Заказ #{order_no} уже отменён.")
+        return
+
+    await orders_repo.cancel_order(session, order, actor)
+    await vk.send_message(peer_id, f"Заказ #{order_no} отменён и убран из активных.", keyboard=main_keyboard())
+
+
 async def _cmd_export(request: Request, session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, args: list[str]) -> None:
     if not can_export(actor):
         await vk.send_message(peer_id, "Excel-выгрузка доступна только админу.")
@@ -345,6 +369,8 @@ async def _event_toggle_item(session: AsyncSession, settings: Settings, vk: VKCl
     order = await orders_repo.get_order(session, payload.get("order_id"))
     if not order:
         raise ValueError("Заказ не найден")
+    if order.status == ORDER_CANCELLED:
+        return
     previous_status = order.status
     await orders_repo.toggle_item_ready(session, order, payload.get("item_id"), actor, settings.toggle_item_ready)
     await refresh_kitchen_order_messages(session, vk, settings, order)
@@ -358,6 +384,8 @@ async def _event_mark_all_ready(session: AsyncSession, settings: Settings, vk: V
     order = await orders_repo.get_order(session, payload.get("order_id"))
     if not order:
         raise ValueError("Заказ не найден")
+    if order.status == ORDER_CANCELLED:
+        return
     previous_status = order.status
     await orders_repo.mark_all_ready(session, order, actor)
     await refresh_kitchen_order_messages(session, vk, settings, order)
