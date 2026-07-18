@@ -5,6 +5,7 @@ from app.models.setting import Setting
 
 
 MODE_STOPS = "stops"
+MODE_EDIT_ORDER_NUMBER = "edit_order_number"
 MODE_EDIT_ORDER_PREFIX = "edit_order:"
 
 

@@ -107,8 +107,7 @@ async def _handle_message_new(request: Request, payload: dict, session: AsyncSes
     elif button_action == "stops":
         await _cmd_stops(session, settings, vk, peer_id, user, [], enter_mode=True)
     elif button_action == "edit":
-        await user_modes.clear_mode(session, user.id)
-        await _cmd_edit_help(vk, peer_id)
+        await _cmd_edit_number_prompt(session, vk, peer_id, user)
     elif command == "/menu":
         await user_modes.clear_mode(session, user.id)
     elif command == "/help":
@@ -146,6 +145,9 @@ async def _handle_message_new(request: Request, payload: dict, session: AsyncSes
         await vk.send_message(peer_id, "Не знаю такую команду. Напишите /menu.")
     else:
         mode = await user_modes.get_mode(session, user.id)
+        if mode == user_modes.MODE_EDIT_ORDER_NUMBER:
+            await _handle_edit_order_number(session, settings, vk, peer_id, user, text)
+            return
         edit_order_id = user_modes.edit_order_id(mode)
         if edit_order_id:
             await _handle_edit_order_text(session, settings, vk, peer_id, user, edit_order_id, text)
@@ -285,7 +287,7 @@ async def _cmd_cancel(session: AsyncSession, vk: VKClient, peer_id: int, actor, 
 
 async def _cmd_edit(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, args: list[str]) -> None:
     if len(args) != 1 or not args[0].isdigit():
-        await _cmd_edit_help(vk, peer_id)
+        await _cmd_edit_number_prompt(session, vk, peer_id, actor)
         return
 
     order = await orders_repo.get_order_by_no(session, int(args[0]))
@@ -296,6 +298,19 @@ async def _cmd_edit_help(vk: VKClient, peer_id: int) -> None:
     await vk.send_message(
         peer_id,
         "Чтобы отредактировать заказ, напишите:\n/edit <номер заказа>\n\nНапример: /edit 12",
+        keyboard=main_keyboard(),
+    )
+
+
+async def _cmd_edit_number_prompt(session: AsyncSession, vk: VKClient, peer_id: int, actor) -> None:
+    await user_modes.set_mode(session, actor.id, user_modes.MODE_EDIT_ORDER_NUMBER)
+    await vk.send_message(
+        peer_id,
+        (
+            "Напишите номер заказа, который нужно редактировать.\n"
+            "Например: 12\n\n"
+            "Чтобы выйти без изменений, нажмите Меню или напишите: отмена"
+        ),
         keyboard=main_keyboard(),
     )
 
@@ -432,6 +447,29 @@ async def _start_edit_order(session: AsyncSession, settings: Settings, vk: VKCli
         ),
         keyboard=edit_mode_keyboard(order.id),
     )
+
+
+async def _handle_edit_order_number(
+    session: AsyncSession,
+    settings: Settings,
+    vk: VKClient,
+    peer_id: int,
+    actor,
+    text: str,
+) -> None:
+    normalized = text.strip().lower()
+    if normalized in {"отмена", "cancel"}:
+        await user_modes.clear_mode(session, actor.id)
+        await vk.send_message(peer_id, "Редактирование отменено.", keyboard=main_keyboard())
+        return
+
+    order_no_text = normalized.removeprefix("#").strip()
+    if not order_no_text.isdigit():
+        await vk.send_message(peer_id, "Нужен только номер заказа. Например: 12\nЧтобы выйти, нажмите Меню или напишите: отмена")
+        return
+
+    order = await orders_repo.get_order_by_no(session, int(order_no_text))
+    await _start_edit_order(session, settings, vk, peer_id, actor, order)
 
 
 async def _handle_edit_order_text(
