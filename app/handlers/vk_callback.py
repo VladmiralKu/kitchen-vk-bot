@@ -23,7 +23,7 @@ from app.repositories import users as users_repo
 from app.services.dispatch import broadcast_to_active_staff, notify_waiter_ready, refresh_kitchen_order_messages, send_order_to_kitchen
 from app.services.excel_export import create_export_file, parse_export_period
 from app.services.keyboards import confirm_order_keyboard, edit_mode_keyboard, edit_order_keyboard, main_keyboard
-from app.services.parser import format_quantity, parse_order_text, render_parsed_order
+from app.services.parser import format_quantity, parse_order_text
 from app.services.permissions import (
     can_cancel_order,
     can_create_order,
@@ -394,7 +394,7 @@ async def _handle_root_text(session: AsyncSession, settings: Settings, vk: VKCli
             await send_order_to_kitchen(session, vk, settings, order, actor)
             await vk.send_message(peer_id, f"Заказ #{order.order_no} отправлен на кухню.", keyboard=edit_order_keyboard(order.id))
         else:
-            await vk.send_message(peer_id, f"Проверь заказ:\n\n{render_parsed_order(parsed)}", keyboard=confirm_order_keyboard(order.id))
+            await vk.send_message(peer_id, _order_title(order), keyboard=confirm_order_keyboard(order.id))
         return
 
     author = actor.display_name or str(actor.vk_user_id)
@@ -427,7 +427,7 @@ async def _start_edit_order(session: AsyncSession, settings: Settings, vk: VKCli
     if not can_edit_order(actor, order):
         await vk.send_message(peer_id, "Редактировать этот заказ может его официант или админ.")
         return
-    if order.status == ORDER_CANCELLED or order.status in DONE_ORDER_STATUSES:
+    if order.status == ORDER_CANCELLED:
         await vk.send_message(peer_id, f"Заказ #{order.order_no} уже закрыт. Его нельзя редактировать.")
         return
 
@@ -435,7 +435,7 @@ async def _start_edit_order(session: AsyncSession, settings: Settings, vk: VKCli
     await vk.send_message(
         peer_id,
         (
-            f"Редактируем заказ #{order.order_no}.\n"
+            f"{_edit_order_title(order)}.\n"
             "Скопируйте текущий текст, измените и отправьте обратно, если нужно перезаписать заказ.\n\n"
             "Текущий текст заказа:\n"
             f"{_editable_order_text(order)}\n\n"
@@ -443,6 +443,7 @@ async def _start_edit_order(session: AsyncSession, settings: Settings, vk: VKCli
             "Пример:\n"
             "+ чай - 1\n"
             "+ К2 медовик - 1\n\n"
+            f"{_done_order_edit_hint(order)}"
             "Кнопка Отмена ниже выйдет без изменений."
         ),
         keyboard=edit_mode_keyboard(order.id),
@@ -495,12 +496,15 @@ async def _handle_edit_order_text(
         await user_modes.clear_mode(session, actor.id)
         await vk.send_message(peer_id, "Нет прав редактировать этот заказ.", keyboard=main_keyboard())
         return
-    if order.status == ORDER_CANCELLED or order.status in DONE_ORDER_STATUSES:
+    addition_text = _addition_edit_text(text)
+    if order.status == ORDER_CANCELLED:
         await user_modes.clear_mode(session, actor.id)
         await vk.send_message(peer_id, f"Заказ #{order.order_no} уже закрыт. Редактирование отменено.", keyboard=main_keyboard())
         return
+    if order.status in DONE_ORDER_STATUSES and addition_text is None:
+        await vk.send_message(peer_id, "Готовый заказ можно только дополнить через +. Например: + чай - 1\nИли нажмите Отмена.")
+        return
 
-    addition_text = _addition_edit_text(text)
     parsed = parse_order_text(addition_text or text)
     if not parsed.has_items:
         await vk.send_message(peer_id, "Не вижу позиций заказа. Пришлите заказ заново, напишите + и добавку или нажмите Отмена.")
@@ -571,6 +575,20 @@ def _addition_edit_text(text: str) -> str | None:
     if not stripped.startswith("+"):
         return None
     return stripped[1:].strip()
+
+
+def _order_title(order) -> str:
+    return f"Заказ #{order.order_no or '...'} • стол {order.table_number or '-'}"
+
+
+def _edit_order_title(order) -> str:
+    return f"Редактировать заказ #{order.order_no or '...'} • стол {order.table_number or '-'}"
+
+
+def _done_order_edit_hint(order) -> str:
+    if order.status not in DONE_ORDER_STATUSES:
+        return ""
+    return "Готовый заказ можно только дополнить через +.\n\n"
 
 
 def _editable_order_text(order) -> str:
