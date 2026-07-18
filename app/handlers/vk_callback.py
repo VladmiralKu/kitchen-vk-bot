@@ -22,8 +22,8 @@ from app.repositories import user_modes
 from app.repositories import users as users_repo
 from app.services.dispatch import broadcast_to_active_staff, notify_waiter_ready, refresh_kitchen_order_messages, send_order_to_kitchen
 from app.services.excel_export import create_export_file, parse_export_period
-from app.services.keyboards import confirm_order_keyboard, edit_order_keyboard, main_keyboard
-from app.services.parser import parse_order_text, render_parsed_order
+from app.services.keyboards import confirm_order_keyboard, edit_mode_keyboard, edit_order_keyboard, main_keyboard
+from app.services.parser import format_quantity, parse_order_text, render_parsed_order
 from app.services.permissions import (
     can_cancel_order,
     can_create_order,
@@ -188,8 +188,11 @@ async def _handle_message_event(request: Request, payload: dict, session: AsyncS
         await _event_send_order(session, settings, vk, user, action_payload)
         await _answer_event(vk, event_id, from_id, peer_id, "Отправлено на кухню")
     elif action == "start_edit_order":
-        await _event_start_edit_order(session, settings, vk, peer_id, user, action_payload)
         await _answer_event(vk, event_id, from_id, peer_id, "Жду новый текст заказа")
+        await _event_start_edit_order(session, settings, vk, peer_id, user, action_payload)
+    elif action == "cancel_edit_order":
+        await _answer_event(vk, event_id, from_id, peer_id, "Редактирование отменено")
+        await _event_cancel_edit_order(session, user)
     elif action == "toggle_item_ready":
         await _event_toggle_item(session, settings, vk, user, action_payload)
         await _answer_event(vk, event_id, from_id, peer_id, "Статус обновлён")
@@ -398,6 +401,10 @@ async def _event_start_edit_order(session: AsyncSession, settings: Settings, vk:
     await _start_edit_order(session, settings, vk, peer_id, actor, order)
 
 
+async def _event_cancel_edit_order(session: AsyncSession, actor) -> None:
+    await user_modes.clear_mode(session, actor.id)
+
+
 async def _start_edit_order(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, order) -> None:
     if not order:
         await vk.send_message(peer_id, "Заказ не найден.")
@@ -414,14 +421,16 @@ async def _start_edit_order(session: AsyncSession, settings: Settings, vk: VKCli
         peer_id,
         (
             f"Редактируем заказ #{order.order_no}.\n"
-            "Пришлите новый текст заказа целиком.\n\n"
+            "Скопируйте текущий текст, измените и отправьте обратно, если нужно перезаписать заказ.\n\n"
+            "Текущий текст заказа:\n"
+            f"{_editable_order_text(order)}\n\n"
+            "Если нужно только добавить позиции, напишите + и добавку.\n"
             "Пример:\n"
-            "Стол 1\n"
-            "борщ - 1\n"
-            "капуч - 2\n\n"
-            "десерт\n\n"
-            "Чтобы выйти без изменений, напишите: отмена"
+            "+ чай - 1\n"
+            "+ К2 медовик - 1\n\n"
+            "Кнопка Отмена ниже выйдет без изменений."
         ),
+        keyboard=edit_mode_keyboard(order.id),
     )
 
 
@@ -453,19 +462,25 @@ async def _handle_edit_order_text(
         await vk.send_message(peer_id, f"Заказ #{order.order_no} уже закрыт. Редактирование отменено.", keyboard=main_keyboard())
         return
 
-    parsed = parse_order_text(text)
+    addition_text = _addition_edit_text(text)
+    parsed = parse_order_text(addition_text or text)
     if not parsed.has_items:
-        await vk.send_message(peer_id, "Не вижу позиций заказа. Пришлите заказ заново или напишите: отмена")
+        await vk.send_message(peer_id, "Не вижу позиций заказа. Пришлите заказ заново, напишите + и добавку или нажмите Отмена.")
         return
 
     was_sent = order.sent_to_kitchen_at is not None
-    order = await orders_repo.update_order(session, order, actor, parsed, text)
+    if addition_text is not None:
+        order = await orders_repo.add_items_to_order(session, order, actor, parsed, addition_text)
+    else:
+        order = await orders_repo.update_order(session, order, actor, parsed, text)
     await user_modes.clear_mode(session, actor.id)
     if was_sent:
         await refresh_kitchen_order_messages(session, vk, settings, order)
-        await vk.send_message(peer_id, f"Заказ #{order.order_no} обновлён. Кухня увидит новый вариант.", keyboard=edit_order_keyboard(order.id))
+        action_text = "дополнен" if addition_text is not None else "обновлён"
+        await vk.send_message(peer_id, f"Заказ #{order.order_no} {action_text}. Кухня увидит новый вариант.", keyboard=edit_order_keyboard(order.id))
     else:
-        await vk.send_message(peer_id, f"Заказ #{order.order_no} обновлён:\n\n{render_parsed_order(parsed)}", keyboard=confirm_order_keyboard(order.id))
+        action_text = "дополнен" if addition_text is not None else "обновлён"
+        await vk.send_message(peer_id, f"Заказ #{order.order_no} {action_text}:\n\n{_editable_order_text(order)}", keyboard=confirm_order_keyboard(order.id))
 
 
 async def _event_toggle_item(session: AsyncSession, settings: Settings, vk: VKClient, actor, payload: dict) -> None:
@@ -511,6 +526,36 @@ async def _event_cancel_order(session: AsyncSession, vk: VKClient, actor, payloa
 async def _answer_event(vk: VKClient, event_id: str | None, user_id: int, peer_id: int, text: str) -> None:
     if event_id:
         await vk.answer_event(event_id, user_id, peer_id, text)
+
+
+def _addition_edit_text(text: str) -> str | None:
+    stripped = text.lstrip()
+    if not stripped.startswith("+"):
+        return None
+    return stripped[1:].strip()
+
+
+def _editable_order_text(order) -> str:
+    lines: list[str] = []
+    if order.table_number:
+        lines.append(f"Стол {order.table_number}")
+
+    current_course: int | None = None
+    for item in sorted(order.items, key=lambda candidate: candidate.position_index):
+        course = int(getattr(item, "course", 1) or 1)
+        if course != current_course:
+            if lines:
+                lines.append("")
+            current_course = course
+            lines.append(f"К{course}")
+        lines.append(f"{item.name} - {format_quantity(item.quantity)}")
+
+    if order.comment:
+        if lines:
+            lines.append("")
+        lines.append(f"комм {order.comment}")
+
+    return "\n".join(lines).strip() or (order.raw_text or "").strip() or "пусто"
 
 
 def _split_command(text: str) -> tuple[str | None, list[str]]:

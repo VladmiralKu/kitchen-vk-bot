@@ -71,3 +71,19 @@ def test_explicit_course_marker():
     assert [(item.name, item.quantity, item.course) for item in parsed.items] == [
         ("мороженое", Decimal("1"), 2),
     ]
+
+
+def test_inline_course_prefix():
+    parsed = parse_order_text("К2 медовик - 1")
+
+    assert [(item.name, item.quantity, item.course) for item in parsed.items] == [
+        ("медовик", Decimal("1"), 2),
+    ]
+
+
+def test_inline_course_prefix_without_quantity_defaults_to_one():
+    parsed = parse_order_text("К2 медовик")
+
+    assert [(item.name, item.quantity, item.course) for item in parsed.items] == [
+        ("медовик", Decimal("1"), 2),
+    ]

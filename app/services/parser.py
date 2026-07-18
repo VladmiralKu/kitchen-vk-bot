@@ -9,6 +9,7 @@ TABLE_RE = re.compile(r"^(?:стол|table)\s*[:#№-]?\s*(.+)$", re.IGNORECASE)
 COMMENT_PREFIX_RE = re.compile(r"^(?:комм|комментарий|comment)\s*:?\s*(.*)$", re.IGNORECASE)
 COMMENT_HINT_RE = re.compile(r"^(?:без|не|no)\b", re.IGNORECASE)
 COURSE_MARKER_RE = re.compile(r"^(?:к|курс|course)\s*([1-9]\d*)$|^([1-9]\d*)\s*(?:к|курс|course)$", re.IGNORECASE)
+COURSE_PREFIX_RE = re.compile(r"^(?:к|курс|course)\s*([1-9]\d*)\s+(.+)$|^([1-9]\d*)\s*(?:к|курс|course)\s+(.+)$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,16 @@ def parse_order_text(text: str) -> ParsedOrder:
         course_marker = _parse_course_marker(line)
         if course_marker is not None:
             current_course = course_marker
+            continue
+
+        course_prefix = _parse_course_prefix(line)
+        if course_prefix is not None:
+            current_course, line = course_prefix
+            parsed_item = _parse_item_line(line)
+            if parsed_item:
+                items.append(ParsedItem(quantity=parsed_item.quantity, name=parsed_item.name, course=current_course))
+            elif line:
+                items.append(ParsedItem(quantity=Decimal("1"), name=line, course=current_course))
             continue
 
         parsed_item = _parse_item_line(line)
@@ -145,6 +156,15 @@ def _parse_course_marker(line: str) -> int | None:
     if not match:
         return None
     return int(next(group for group in match.groups() if group))
+
+
+def _parse_course_prefix(line: str) -> tuple[int, str] | None:
+    match = COURSE_PREFIX_RE.match(line.strip())
+    if not match:
+        return None
+    course = int(match.group(1) or match.group(3))
+    item_text = (match.group(2) or match.group(4)).strip()
+    return course, item_text
 
 
 def _looks_like_order_context(lines: list[str], index: int, table_number: str | None, items: list[ParsedItem]) -> bool:

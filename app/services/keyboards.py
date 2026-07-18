@@ -65,6 +65,10 @@ def edit_order_keyboard(order_id: str) -> dict:
     return inline_keyboard([[callback_button("Редактировать заказ", {"action": "start_edit_order", "order_id": order_id}, "secondary")]])
 
 
+def edit_mode_keyboard(order_id: str) -> dict:
+    return inline_keyboard([[callback_button("Отмена", {"action": "cancel_edit_order", "order_id": order_id}, "negative")]])
+
+
 def kitchen_order_keyboard(order_id: str, items: Iterable, include_cancel: bool = False) -> dict:
     rows: list[list[dict]] = []
     for item in items:

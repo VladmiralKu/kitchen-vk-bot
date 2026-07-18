@@ -78,6 +78,42 @@ async def update_order(session: AsyncSession, order: Order, actor: User, parsed:
     return order
 
 
+async def add_items_to_order(session: AsyncSession, order: Order, actor: User, parsed: ParsedOrder, raw_text: str) -> Order:
+    if parsed.comment:
+        order.comment = "\n".join(part for part in [order.comment, parsed.comment] if part).strip() or None
+
+    if parsed.table_number and not order.table_number:
+        order.table_number = parsed.table_number
+
+    original_raw = (order.raw_text or "").strip()
+    addition_raw = raw_text.strip()
+    order.raw_text = f"{original_raw}\n\n{addition_raw}" if original_raw else addition_raw
+
+    last_index = max((item.position_index for item in order.items), default=0)
+    for offset, parsed_item in enumerate(parsed.items, start=1):
+        session.add(
+            OrderItem(
+                order_id=order.id,
+                position_index=last_index + offset,
+                course=parsed_item.course,
+                quantity=parsed_item.quantity,
+                name=parsed_item.name,
+                status=ITEM_PENDING,
+            )
+        )
+
+    session.add(OrderEvent(order_id=order.id, user_id=actor.id, event_type="order_items_added", payload={"raw_text": raw_text}))
+    await session.flush()
+    await session.refresh(order, attribute_names=["items"])
+    order.status = derive_order_status([item.status for item in order.items])
+    if order.status != ORDER_READY:
+        order.ready_at = None
+        order.completed_at = None
+        order.total_ready_seconds = None
+    await session.flush()
+    return order
+
+
 async def get_order(session: AsyncSession, order_id: str) -> Order | None:
     result = await session.execute(
         select(Order)
