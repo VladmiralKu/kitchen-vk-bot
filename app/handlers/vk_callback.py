@@ -394,7 +394,7 @@ async def _event_send_order(session: AsyncSession, settings: Settings, vk: VKCli
 
 
 async def _event_start_edit_order(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, payload: dict) -> None:
-    order = await orders_repo.get_order(payload.get("order_id"))
+    order = await orders_repo.get_order(session, payload.get("order_id"))
     await _start_edit_order(session, settings, vk, peer_id, actor, order)
 
 
@@ -439,7 +439,7 @@ async def _handle_edit_order_text(
         await vk.send_message(peer_id, "Редактирование отменено.", keyboard=main_keyboard())
         return
 
-    order = await orders_repo.get_order(order_id)
+    order = await orders_repo.get_order(session, order_id)
     if not order:
         await user_modes.clear_mode(session, actor.id)
         await vk.send_message(peer_id, "Заказ не найден, редактирование отменено.", keyboard=main_keyboard())
