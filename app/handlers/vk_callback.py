@@ -3,7 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime
+from datetime import date, datetime, time, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -104,6 +105,9 @@ async def _handle_message_new(request: Request, payload: dict, session: AsyncSes
     elif button_action == "orders":
         await user_modes.clear_mode(session, user.id)
         await _cmd_orders(session, settings, vk, peer_id, user)
+    elif button_action == "done":
+        await user_modes.clear_mode(session, user.id)
+        await _cmd_done(session, settings, vk, peer_id, user, [])
     elif button_action == "stops":
         await _cmd_stops(session, settings, vk, peer_id, user, [], enter_mode=True)
     elif button_action == "edit":
@@ -111,7 +115,7 @@ async def _handle_message_new(request: Request, payload: dict, session: AsyncSes
     elif command == "/menu":
         await user_modes.clear_mode(session, user.id)
     elif command == "/help":
-        await vk.send_message(peer_id, _help_text(user), keyboard=main_keyboard())
+        await vk.send_message(peer_id, _help_text(user), keyboard=main_keyboard(user.role))
     elif command == "/add":
         await user_modes.clear_mode(session, user.id)
         await _cmd_add(session, vk, peer_id, user, args)
@@ -126,7 +130,7 @@ async def _handle_message_new(request: Request, payload: dict, session: AsyncSes
         await _cmd_orders(session, settings, vk, peer_id, user)
     elif command == "/done":
         await user_modes.clear_mode(session, user.id)
-        await _cmd_done(session, settings, vk, peer_id, user)
+        await _cmd_done(session, settings, vk, peer_id, user, args)
     elif command == "/cancel":
         await user_modes.clear_mode(session, user.id)
         await _cmd_cancel(session, vk, peer_id, user, args)
@@ -176,7 +180,7 @@ async def _handle_message_event(request: Request, payload: dict, session: AsyncS
         await _cmd_orders(session, settings, vk, peer_id, user)
     elif action == "show_done":
         await user_modes.clear_mode(session, user.id)
-        await _cmd_done(session, settings, vk, peer_id, user)
+        await _cmd_done(session, settings, vk, peer_id, user, [])
     elif action == "show_stops":
         await _cmd_stops(session, settings, vk, peer_id, user, [], enter_mode=True)
     elif action == "show_users":
@@ -211,12 +215,12 @@ async def _handle_message_event(request: Request, payload: dict, session: AsyncS
 async def _cmd_start(session: AsyncSession, settings: Settings, vk: VKClient, from_id: int, peer_id: int, user) -> None:
     if user and is_active(user):
         await user_modes.clear_mode(session, user.id)
-        await vk.send_message(peer_id, _help_text(user), keyboard=main_keyboard())
+        await vk.send_message(peer_id, _help_text(user), keyboard=main_keyboard(user.role))
         return
 
     if settings.superadmin_vk_id and from_id == settings.superadmin_vk_id:
         user = await users_repo.ensure_superadmin(session, from_id)
-        await vk.send_message(peer_id, f"Вы подключены как первый администратор.\n\n{_help_text(user)}", keyboard=main_keyboard())
+        await vk.send_message(peer_id, f"Вы подключены как первый администратор.\n\n{_help_text(user)}", keyboard=main_keyboard(user.role))
         return
 
     await vk.send_message(peer_id, f"Бот видит ваш VK ID: {from_id}\nПередайте его администратору для добавления.")
@@ -256,12 +260,19 @@ async def _cmd_users(session: AsyncSession, vk: VKClient, peer_id: int, actor) -
 
 async def _cmd_orders(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor) -> None:
     orders = await orders_repo.list_active_orders(session, actor)
-    await vk.send_message(peer_id, active_orders_list(orders), keyboard=main_keyboard())
+    await vk.send_message(peer_id, active_orders_list(orders), keyboard=main_keyboard(actor.role))
 
 
-async def _cmd_done(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor) -> None:
-    orders = await orders_repo.list_done_orders(session, actor)
-    await vk.send_message(peer_id, orders_list("Выполненные заказы", orders, settings.app_timezone))
+async def _cmd_done(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, args: list[str]) -> None:
+    try:
+        selected_date = _parse_done_date(args, settings.app_timezone)
+    except ValueError as exc:
+        await vk.send_message(peer_id, str(exc), keyboard=main_keyboard(actor.role))
+        return
+
+    start_utc, end_utc = _day_bounds_utc(selected_date, settings.app_timezone)
+    orders = await orders_repo.list_done_orders(session, actor, start_utc=start_utc, end_utc=end_utc)
+    await vk.send_message(peer_id, orders_list(f"Выполненные за {_done_date_label(selected_date, settings.app_timezone)}", orders, settings.app_timezone), keyboard=main_keyboard(actor.role))
 
 
 async def _cmd_cancel(session: AsyncSession, vk: VKClient, peer_id: int, actor, args: list[str]) -> None:
@@ -282,7 +293,7 @@ async def _cmd_cancel(session: AsyncSession, vk: VKClient, peer_id: int, actor, 
         return
 
     await orders_repo.cancel_order(session, order, actor)
-    await vk.send_message(peer_id, f"Заказ #{order_no} отменён и убран из активных.", keyboard=main_keyboard())
+    await vk.send_message(peer_id, f"Заказ #{order_no} отменён и убран из активных.", keyboard=main_keyboard(actor.role))
 
 
 async def _cmd_edit(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, args: list[str]) -> None:
@@ -311,7 +322,7 @@ async def _cmd_edit_number_prompt(session: AsyncSession, vk: VKClient, peer_id: 
             "Например: 12\n\n"
             "Чтобы выйти без изменений, нажмите Меню или напишите: отмена"
         ),
-        keyboard=main_keyboard(),
+        keyboard=main_keyboard(actor.role),
     )
 
 
@@ -370,7 +381,7 @@ async def _cmd_stops(
     await vk.send_message(
         peer_id,
         _stops_mode_text(await stops_repo.list_active_stops(session), settings.app_timezone),
-        keyboard=main_keyboard(),
+        keyboard=main_keyboard(actor.role),
     )
 
 
@@ -381,7 +392,7 @@ async def _create_stop_from_text(session: AsyncSession, settings: Settings, vk: 
     await vk.send_message(
         peer_id,
         "Стоп добавлен. Можно написать следующий стоп или нажать Меню, чтобы выйти из стопов.",
-        keyboard=main_keyboard(),
+        keyboard=main_keyboard(actor.role),
     )
 
 
@@ -399,7 +410,7 @@ async def _handle_root_text(session: AsyncSession, settings: Settings, vk: VKCli
 
     author = actor.display_name or str(actor.vk_user_id)
     await _notify_admins_raw_text(session, vk, actor, f"Сообщение • {author}\n{text}")
-    await vk.send_message(peer_id, "Сообщение передано администраторам.", keyboard=main_keyboard())
+    await vk.send_message(peer_id, "Сообщение передано администраторам.", keyboard=main_keyboard(actor.role))
 
 
 async def _event_send_order(session: AsyncSession, settings: Settings, vk: VKClient, actor, payload: dict) -> None:
@@ -461,7 +472,7 @@ async def _handle_edit_order_number(
     normalized = text.strip().lower()
     if normalized in {"отмена", "cancel"}:
         await user_modes.clear_mode(session, actor.id)
-        await vk.send_message(peer_id, "Редактирование отменено.", keyboard=main_keyboard())
+        await vk.send_message(peer_id, "Редактирование отменено.", keyboard=main_keyboard(actor.role))
         return
 
     order_no_text = normalized.removeprefix("#").strip()
@@ -484,22 +495,22 @@ async def _handle_edit_order_text(
 ) -> None:
     if text.strip().lower() in {"отмена", "cancel"}:
         await user_modes.clear_mode(session, actor.id)
-        await vk.send_message(peer_id, "Редактирование отменено.", keyboard=main_keyboard())
+        await vk.send_message(peer_id, "Редактирование отменено.", keyboard=main_keyboard(actor.role))
         return
 
     order = await orders_repo.get_order(session, order_id)
     if not order:
         await user_modes.clear_mode(session, actor.id)
-        await vk.send_message(peer_id, "Заказ не найден, редактирование отменено.", keyboard=main_keyboard())
+        await vk.send_message(peer_id, "Заказ не найден, редактирование отменено.", keyboard=main_keyboard(actor.role))
         return
     if not can_edit_order(actor, order):
         await user_modes.clear_mode(session, actor.id)
-        await vk.send_message(peer_id, "Нет прав редактировать этот заказ.", keyboard=main_keyboard())
+        await vk.send_message(peer_id, "Нет прав редактировать этот заказ.", keyboard=main_keyboard(actor.role))
         return
     addition_text = _addition_edit_text(text)
     if order.status == ORDER_CANCELLED:
         await user_modes.clear_mode(session, actor.id)
-        await vk.send_message(peer_id, f"Заказ #{order.order_no} уже закрыт. Редактирование отменено.", keyboard=main_keyboard())
+        await vk.send_message(peer_id, f"Заказ #{order.order_no} уже закрыт. Редактирование отменено.", keyboard=main_keyboard(actor.role))
         return
     if order.status in DONE_ORDER_STATUSES and addition_text is None:
         await vk.send_message(peer_id, "Готовый заказ можно только дополнить через +. Например: + чай - 1\nИли нажмите Отмена.")
@@ -570,6 +581,42 @@ async def _answer_event(vk: VKClient, event_id: str | None, user_id: int, peer_i
         await vk.answer_event(event_id, user_id, peer_id, text)
 
 
+def _parse_done_date(args: list[str], timezone_name: str) -> date:
+    clean_args = [arg for arg in args if arg != "+"]
+    today = datetime.now(ZoneInfo(timezone_name)).date()
+    if not clean_args:
+        return today
+    if len(clean_args) != 1:
+        raise ValueError("Формат: /done или /done YYYY-MM-DD. Например: /done 2026-07-18")
+
+    raw = clean_args[0].strip().lower()
+    if raw in {"today", "сегодня"}:
+        return today
+    if raw in {"yesterday", "вчера"}:
+        return date.fromordinal(today.toordinal() - 1)
+
+    for pattern in ("%Y-%m-%d", "%d.%m.%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(raw, pattern).date()
+        except ValueError:
+            pass
+    raise ValueError("Не понял дату. Примеры: /done 2026-07-18 или /done 18.07.2026")
+
+
+def _day_bounds_utc(day: date, timezone_name: str) -> tuple[datetime, datetime]:
+    tz = ZoneInfo(timezone_name)
+    start_local = datetime.combine(day, time.min, tzinfo=tz)
+    end_local = datetime.combine(day, time.max, tzinfo=tz)
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
+def _done_date_label(day: date, timezone_name: str) -> str:
+    today = datetime.now(ZoneInfo(timezone_name)).date()
+    if day == today:
+        return "сегодня"
+    return day.strftime("%d.%m.%Y")
+
+
 def _addition_edit_text(text: str) -> str | None:
     stripped = text.lstrip()
     if not stripped.startswith("+"):
@@ -633,6 +680,7 @@ def _help_text(user) -> str:
         "Стол 4\nборщ - 2\nпаста - 1\n\nдесерт\nкомм: без лука\n\n"
         "Пустая строка после позиций начинает следующий курс: выше борщ и паста будут К1, десерт будет К2.\n"
         "Чтобы отредактировать активный заказ: /edit <номер заказа>.\n\n"
+        "Выполненные заказы: /done или /done 2026-07-18.\n"
         "Чтобы добавить стоп, нажмите Стопы и напишите текст обычным сообщением.\n"
         "Команда /help покажет эту подсказку снова."
     )
@@ -662,6 +710,8 @@ def _button_action(text: str) -> str | None:
         return "menu"
     if normalized in {"активные", "заказы", "активные заказы", "orders"}:
         return "orders"
+    if normalized in {"выполненные", "готовые", "done"}:
+        return "done"
     if normalized in {"стопы", "стоп", "stops", "stop"}:
         return "stops"
     if normalized in {"редактировать", "edit"}:

@@ -8,7 +8,8 @@ def inline_keyboard(rows: list[list[dict]]) -> dict:
     return {"one_time": False, "inline": True, "buttons": rows}
 
 
-def main_keyboard() -> dict:
+def main_keyboard(role: str | None = None) -> dict:
+    bottom_right = text_button("Выполненные", "secondary") if role == ROLE_COOK else text_button("Редактировать", "secondary")
     return {
         "one_time": False,
         "inline": False,
@@ -19,7 +20,7 @@ def main_keyboard() -> dict:
             ],
             [
                 text_button("Стопы", "secondary"),
-                text_button("Редактировать", "secondary"),
+                bottom_right,
             ],
         ],
     }

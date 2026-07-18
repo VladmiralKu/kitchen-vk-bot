@@ -146,7 +146,13 @@ async def list_active_orders(session: AsyncSession, user: User, limit: int = 20)
     return list(result.scalars().unique())
 
 
-async def list_done_orders(session: AsyncSession, user: User, limit: int = 20) -> list[Order]:
+async def list_done_orders(
+    session: AsyncSession,
+    user: User,
+    start_utc: datetime | None = None,
+    end_utc: datetime | None = None,
+    limit: int = 50,
+) -> list[Order]:
     query = (
         select(Order)
         .options(selectinload(Order.items), selectinload(Order.waiter))
@@ -154,6 +160,8 @@ async def list_done_orders(session: AsyncSession, user: User, limit: int = 20) -
         .order_by(Order.ready_at.desc().nullslast(), Order.created_at.desc())
         .limit(limit)
     )
+    if start_utc and end_utc:
+        query = query.where(Order.ready_at >= start_utc, Order.ready_at <= end_utc)
     if user.role == ROLE_WAITER:
         query = query.where(Order.waiter_id == user.id)
     result = await session.execute(query)
