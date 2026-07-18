@@ -74,6 +74,7 @@ def build_export_workbook(data: dict, timezone_name: str) -> Workbook:
         [
             "order_no",
             "item_index",
+            "course",
             "quantity",
             "name",
             "status",
@@ -175,6 +176,7 @@ def _item_row(order, item, users_by_id: dict) -> dict:
     return {
         "order_no": order.order_no,
         "item_index": item.position_index,
+        "course": getattr(item, "course", 1),
         "quantity": float(item.quantity),
         "name": item.name,
         "status": item.status,

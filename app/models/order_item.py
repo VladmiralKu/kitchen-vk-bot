@@ -15,6 +15,7 @@ class OrderItem(TimestampMixin, Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"), nullable=False, index=True)
     position_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    course: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default=ITEM_PENDING)

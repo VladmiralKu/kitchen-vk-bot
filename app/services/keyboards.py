@@ -19,6 +19,7 @@ def main_keyboard() -> dict:
             ],
             [
                 text_button("Стопы", "secondary"),
+                text_button("Редактировать", "secondary"),
             ],
         ],
     }
@@ -50,6 +51,9 @@ def confirm_order_keyboard(order_id: str) -> dict:
     return inline_keyboard(
         [
             [
+                callback_button("Редактировать", {"action": "start_edit_order", "order_id": order_id}, "secondary"),
+            ],
+            [
                 callback_button("Отправить на кухню", {"action": "send_order_to_kitchen", "order_id": order_id}, "positive"),
                 callback_button("Отмена", {"action": "cancel_order", "order_id": order_id}, "negative"),
             ]
@@ -57,12 +61,16 @@ def confirm_order_keyboard(order_id: str) -> dict:
     )
 
 
+def edit_order_keyboard(order_id: str) -> dict:
+    return inline_keyboard([[callback_button("Редактировать заказ", {"action": "start_edit_order", "order_id": order_id}, "secondary")]])
+
+
 def kitchen_order_keyboard(order_id: str, items: Iterable, include_cancel: bool = False) -> dict:
     rows: list[list[dict]] = []
     for item in items:
         mark = "готово" if item.status == ITEM_READY else "не готово"
         color = "positive" if item.status == ITEM_READY else "secondary"
-        label = f"{mark}: {format_item(item.name, item.quantity)}"
+        label = f"К{getattr(item, 'course', 1) or 1} {mark}: {format_item(item.name, item.quantity)}"
         rows.append([callback_button(label, {"action": "toggle_item_ready", "order_id": order_id, "item_id": item.id}, color)])
 
     rows.append([callback_button("Готово всё", {"action": "mark_order_ready", "order_id": order_id}, "positive")])

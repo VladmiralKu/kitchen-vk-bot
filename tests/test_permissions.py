@@ -1,13 +1,19 @@
 from dataclasses import dataclass
 
 from app.models.constants import ACTIVE_STATUS, DELETED_STATUS, ROLE_ADMIN, ROLE_COOK, ROLE_WAITER
-from app.services.permissions import can_create_order, can_export, can_manage_users, can_mark_item_ready
+from app.services.permissions import can_create_order, can_edit_order, can_export, can_manage_users, can_mark_item_ready
 
 
 @dataclass
 class UserStub:
     role: str
     status: str = ACTIVE_STATUS
+    id: str = "user-id"
+
+
+@dataclass
+class OrderStub:
+    waiter_id: str
 
 
 def test_waiter_can_create_order_but_cannot_export():
@@ -15,6 +21,7 @@ def test_waiter_can_create_order_but_cannot_export():
 
     assert can_create_order(user)
     assert not can_export(user)
+    assert can_edit_order(user, OrderStub(waiter_id="user-id"))
 
 
 def test_cook_can_mark_ready_but_cannot_create_order():
@@ -29,6 +36,7 @@ def test_admin_can_manage_users_and_export():
 
     assert can_manage_users(user)
     assert can_export(user)
+    assert can_edit_order(user, OrderStub(waiter_id="other-id"))
 
 
 def test_deleted_user_has_no_permissions():

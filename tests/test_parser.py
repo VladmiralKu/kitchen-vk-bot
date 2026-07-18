@@ -52,3 +52,22 @@ def test_comment_alias_without_colon():
 
     assert parsed.items[0].name == "капуч кокос"
     assert parsed.comment == "без сахара"
+
+
+def test_blank_line_starts_second_course():
+    parsed = parse_order_text("Стол 1\nборщ - 1\nкапуч - 2\n\nдесерт")
+
+    assert parsed.table_number == "1"
+    assert [(item.name, item.quantity, item.course) for item in parsed.items] == [
+        ("борщ", Decimal("1"), 1),
+        ("капуч", Decimal("2"), 1),
+        ("десерт", Decimal("1"), 2),
+    ]
+
+
+def test_explicit_course_marker():
+    parsed = parse_order_text("Стол 1\nК2\nмороженое 1")
+
+    assert [(item.name, item.quantity, item.course) for item in parsed.items] == [
+        ("мороженое", Decimal("1"), 2),
+    ]

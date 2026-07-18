@@ -5,6 +5,7 @@ from app.models.setting import Setting
 
 
 MODE_STOPS = "stops"
+MODE_EDIT_ORDER_PREFIX = "edit_order:"
 
 
 async def get_mode(session: AsyncSession, user_id: str) -> str | None:
@@ -34,3 +35,13 @@ async def clear_mode(session: AsyncSession, user_id: str) -> None:
 
 def _mode_key(user_id: str) -> str:
     return f"user_mode:{user_id}"
+
+
+def edit_order_mode(order_id: str) -> str:
+    return f"{MODE_EDIT_ORDER_PREFIX}{order_id}"
+
+
+def edit_order_id(mode: str | None) -> str | None:
+    if mode and mode.startswith(MODE_EDIT_ORDER_PREFIX):
+        return mode.removeprefix(MODE_EDIT_ORDER_PREFIX)
+    return None

@@ -21,6 +21,14 @@ def can_mark_item_ready(user) -> bool:
     return can_view_kitchen(user)
 
 
+def can_edit_order(user, order) -> bool:
+    if not is_active(user):
+        return False
+    if getattr(user, "role", None) == ROLE_ADMIN:
+        return True
+    return getattr(user, "role", None) == ROLE_WAITER and getattr(order, "waiter_id", None) == getattr(user, "id", None)
+
+
 def can_view_order(user, order) -> bool:
     if not is_active(user):
         return False

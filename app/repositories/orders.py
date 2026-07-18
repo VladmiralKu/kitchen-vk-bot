@@ -10,6 +10,8 @@ from app.models.constants import (
     ITEM_READY,
     OPEN_ORDER_STATUSES,
     ORDER_CANCELLED,
+    ORDER_IN_PROGRESS,
+    ORDER_NEW,
     ORDER_READY,
     ROLE_ADMIN,
     ROLE_COOK,
@@ -33,12 +35,44 @@ async def create_order(session: AsyncSession, waiter: User, parsed: ParsedOrder,
             OrderItem(
                 order_id=order.id,
                 position_index=index,
+                course=parsed_item.course,
                 quantity=parsed_item.quantity,
                 name=parsed_item.name,
                 status=ITEM_PENDING,
             )
         )
     session.add(OrderEvent(order_id=order.id, user_id=waiter.id, event_type="order_created", payload={"raw_text": raw_text}))
+    await session.flush()
+    await session.refresh(order, attribute_names=["items"])
+    return order
+
+
+async def update_order(session: AsyncSession, order: Order, actor: User, parsed: ParsedOrder, raw_text: str) -> Order:
+    order.table_number = parsed.table_number
+    order.raw_text = raw_text
+    order.comment = parsed.comment
+    order.ready_at = None
+    order.completed_at = None
+    order.total_ready_seconds = None
+    order.status = ORDER_IN_PROGRESS if order.sent_to_kitchen_at else ORDER_NEW
+
+    for item in list(order.items):
+        await session.delete(item)
+    await session.flush()
+
+    for index, parsed_item in enumerate(parsed.items, start=1):
+        session.add(
+            OrderItem(
+                order_id=order.id,
+                position_index=index,
+                course=parsed_item.course,
+                quantity=parsed_item.quantity,
+                name=parsed_item.name,
+                status=ITEM_PENDING,
+            )
+        )
+
+    session.add(OrderEvent(order_id=order.id, user_id=actor.id, event_type="order_edited", payload={"raw_text": raw_text}))
     await session.flush()
     await session.refresh(order, attribute_names=["items"])
     return order

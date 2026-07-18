@@ -74,6 +74,7 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("order_id", sa.String(length=36), nullable=False),
         sa.Column("position_index", sa.Integer(), nullable=False),
+        sa.Column("course", sa.Integer(), nullable=False),
         sa.Column("quantity", sa.Numeric(10, 2), nullable=False),
         sa.Column("name", sa.String(length=255), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False),

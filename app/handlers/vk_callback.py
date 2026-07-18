@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import Settings, get_settings
 from app.db import get_session
-from app.models.constants import ORDER_CANCELLED, ORDER_READY, ROLE_ADMIN
+from app.models.constants import DONE_ORDER_STATUSES, ORDER_CANCELLED, ORDER_READY, ROLE_ADMIN
 from app.models.order import Order
 from app.repositories import events as events_repo
 from app.repositories import orders as orders_repo
@@ -22,11 +22,12 @@ from app.repositories import user_modes
 from app.repositories import users as users_repo
 from app.services.dispatch import broadcast_to_active_staff, notify_waiter_ready, refresh_kitchen_order_messages, send_order_to_kitchen
 from app.services.excel_export import create_export_file, parse_export_period
-from app.services.keyboards import confirm_order_keyboard, main_keyboard
+from app.services.keyboards import confirm_order_keyboard, edit_order_keyboard, main_keyboard
 from app.services.parser import parse_order_text, render_parsed_order
 from app.services.permissions import (
     can_cancel_order,
     can_create_order,
+    can_edit_order,
     can_export,
     can_manage_users,
     can_mark_item_ready,
@@ -105,6 +106,9 @@ async def _handle_message_new(request: Request, payload: dict, session: AsyncSes
         await _cmd_orders(session, settings, vk, peer_id, user)
     elif button_action == "stops":
         await _cmd_stops(session, settings, vk, peer_id, user, [], enter_mode=True)
+    elif button_action == "edit":
+        await user_modes.clear_mode(session, user.id)
+        await _cmd_edit_help(vk, peer_id)
     elif command == "/menu":
         await user_modes.clear_mode(session, user.id)
     elif command == "/help":
@@ -127,6 +131,9 @@ async def _handle_message_new(request: Request, payload: dict, session: AsyncSes
     elif command == "/cancel":
         await user_modes.clear_mode(session, user.id)
         await _cmd_cancel(session, vk, peer_id, user, args)
+    elif command == "/edit":
+        await user_modes.clear_mode(session, user.id)
+        await _cmd_edit(session, settings, vk, peer_id, user, args)
     elif command == "/export":
         await user_modes.clear_mode(session, user.id)
         await _cmd_export(request, session, settings, vk, peer_id, user, args)
@@ -138,7 +145,12 @@ async def _handle_message_new(request: Request, payload: dict, session: AsyncSes
     elif command and command.startswith("/"):
         await vk.send_message(peer_id, "Не знаю такую команду. Напишите /menu.")
     else:
-        if await user_modes.get_mode(session, user.id) == user_modes.MODE_STOPS:
+        mode = await user_modes.get_mode(session, user.id)
+        edit_order_id = user_modes.edit_order_id(mode)
+        if edit_order_id:
+            await _handle_edit_order_text(session, settings, vk, peer_id, user, edit_order_id, text)
+            return
+        if mode == user_modes.MODE_STOPS:
             await _create_stop_from_text(session, settings, vk, peer_id, user, text)
             return
         await _handle_root_text(session, settings, vk, peer_id, user, text)
@@ -175,6 +187,9 @@ async def _handle_message_event(request: Request, payload: dict, session: AsyncS
     elif action == "send_order_to_kitchen":
         await _event_send_order(session, settings, vk, user, action_payload)
         await _answer_event(vk, event_id, from_id, peer_id, "Отправлено на кухню")
+    elif action == "start_edit_order":
+        await _event_start_edit_order(session, settings, vk, peer_id, user, action_payload)
+        await _answer_event(vk, event_id, from_id, peer_id, "Жду новый текст заказа")
     elif action == "toggle_item_ready":
         await _event_toggle_item(session, settings, vk, user, action_payload)
         await _answer_event(vk, event_id, from_id, peer_id, "Статус обновлён")
@@ -265,6 +280,23 @@ async def _cmd_cancel(session: AsyncSession, vk: VKClient, peer_id: int, actor, 
     await vk.send_message(peer_id, f"Заказ #{order_no} отменён и убран из активных.", keyboard=main_keyboard())
 
 
+async def _cmd_edit(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, args: list[str]) -> None:
+    if len(args) != 1 or not args[0].isdigit():
+        await _cmd_edit_help(vk, peer_id)
+        return
+
+    order = await orders_repo.get_order_by_no(session, int(args[0]))
+    await _start_edit_order(session, settings, vk, peer_id, actor, order)
+
+
+async def _cmd_edit_help(vk: VKClient, peer_id: int) -> None:
+    await vk.send_message(
+        peer_id,
+        "Чтобы отредактировать заказ, напишите:\n/edit <номер заказа>\n\nНапример: /edit 12",
+        keyboard=main_keyboard(),
+    )
+
+
 async def _cmd_export(request: Request, session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, args: list[str]) -> None:
     if not can_export(actor):
         await vk.send_message(peer_id, "Excel-выгрузка доступна только админу.")
@@ -342,7 +374,7 @@ async def _handle_root_text(session: AsyncSession, settings: Settings, vk: VKCli
         await _notify_admins_raw_order(session, vk, actor, order, text)
         if settings.auto_send_orders:
             await send_order_to_kitchen(session, vk, settings, order, actor)
-            await vk.send_message(peer_id, f"Заказ #{order.order_no} отправлен на кухню.")
+            await vk.send_message(peer_id, f"Заказ #{order.order_no} отправлен на кухню.", keyboard=edit_order_keyboard(order.id))
         else:
             await vk.send_message(peer_id, f"Проверь заказ:\n\n{render_parsed_order(parsed)}", keyboard=confirm_order_keyboard(order.id))
         return
@@ -359,6 +391,81 @@ async def _event_send_order(session: AsyncSession, settings: Settings, vk: VKCli
     if actor.id != order.waiter_id and not can_export(actor):
         raise PermissionError("Нет прав отправить заказ")
     await send_order_to_kitchen(session, vk, settings, order, actor)
+
+
+async def _event_start_edit_order(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, payload: dict) -> None:
+    order = await orders_repo.get_order(payload.get("order_id"))
+    await _start_edit_order(session, settings, vk, peer_id, actor, order)
+
+
+async def _start_edit_order(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, order) -> None:
+    if not order:
+        await vk.send_message(peer_id, "Заказ не найден.")
+        return
+    if not can_edit_order(actor, order):
+        await vk.send_message(peer_id, "Редактировать этот заказ может его официант или админ.")
+        return
+    if order.status == ORDER_CANCELLED or order.status in DONE_ORDER_STATUSES:
+        await vk.send_message(peer_id, f"Заказ #{order.order_no} уже закрыт. Его нельзя редактировать.")
+        return
+
+    await user_modes.set_mode(session, actor.id, user_modes.edit_order_mode(order.id))
+    await vk.send_message(
+        peer_id,
+        (
+            f"Редактируем заказ #{order.order_no}.\n"
+            "Пришлите новый текст заказа целиком.\n\n"
+            "Пример:\n"
+            "Стол 1\n"
+            "борщ - 1\n"
+            "капуч - 2\n\n"
+            "десерт\n\n"
+            "Чтобы выйти без изменений, напишите: отмена"
+        ),
+    )
+
+
+async def _handle_edit_order_text(
+    session: AsyncSession,
+    settings: Settings,
+    vk: VKClient,
+    peer_id: int,
+    actor,
+    order_id: str,
+    text: str,
+) -> None:
+    if text.strip().lower() in {"отмена", "cancel"}:
+        await user_modes.clear_mode(session, actor.id)
+        await vk.send_message(peer_id, "Редактирование отменено.", keyboard=main_keyboard())
+        return
+
+    order = await orders_repo.get_order(order_id)
+    if not order:
+        await user_modes.clear_mode(session, actor.id)
+        await vk.send_message(peer_id, "Заказ не найден, редактирование отменено.", keyboard=main_keyboard())
+        return
+    if not can_edit_order(actor, order):
+        await user_modes.clear_mode(session, actor.id)
+        await vk.send_message(peer_id, "Нет прав редактировать этот заказ.", keyboard=main_keyboard())
+        return
+    if order.status == ORDER_CANCELLED or order.status in DONE_ORDER_STATUSES:
+        await user_modes.clear_mode(session, actor.id)
+        await vk.send_message(peer_id, f"Заказ #{order.order_no} уже закрыт. Редактирование отменено.", keyboard=main_keyboard())
+        return
+
+    parsed = parse_order_text(text)
+    if not parsed.has_items:
+        await vk.send_message(peer_id, "Не вижу позиций заказа. Пришлите заказ заново или напишите: отмена")
+        return
+
+    was_sent = order.sent_to_kitchen_at is not None
+    order = await orders_repo.update_order(session, order, actor, parsed, text)
+    await user_modes.clear_mode(session, actor.id)
+    if was_sent:
+        await refresh_kitchen_order_messages(session, vk, settings, order)
+        await vk.send_message(peer_id, f"Заказ #{order.order_no} обновлён. Кухня увидит новый вариант.", keyboard=edit_order_keyboard(order.id))
+    else:
+        await vk.send_message(peer_id, f"Заказ #{order.order_no} обновлён:\n\n{render_parsed_order(parsed)}", keyboard=confirm_order_keyboard(order.id))
 
 
 async def _event_toggle_item(session: AsyncSession, settings: Settings, vk: VKClient, actor, payload: dict) -> None:
@@ -422,7 +529,9 @@ def _help_text(user) -> str:
     return (
         f"Ваша роль: {user.role}.\n\n"
         "Как внести заказ:\n"
-        "Стол 4\nборщ 2\nпаста 1\nкомм: без лука\n\n"
+        "Стол 4\nборщ - 2\nпаста - 1\n\nдесерт\nкомм: без лука\n\n"
+        "Пустая строка после позиций начинает следующий курс: выше борщ и паста будут К1, десерт будет К2.\n"
+        "Чтобы отредактировать активный заказ: /edit <номер заказа>.\n\n"
         "Чтобы добавить стоп, нажмите Стопы и напишите текст обычным сообщением.\n"
         "Команда /help покажет эту подсказку снова."
     )
@@ -454,6 +563,8 @@ def _button_action(text: str) -> str | None:
         return "orders"
     if normalized in {"стопы", "стоп", "stops", "stop"}:
         return "stops"
+    if normalized in {"редактировать", "edit"}:
+        return "edit"
     return None
 
 

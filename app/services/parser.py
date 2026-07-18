@@ -4,16 +4,18 @@ import re
 
 
 LEADING_QUANTITY_RE = re.compile(r"^(\d+(?:[\.,]\d+)?)\s+(.+)$")
-TRAILING_QUANTITY_RE = re.compile(r"^(.+?)\s+(\d+(?:[\.,]\d+)?)$")
+TRAILING_QUANTITY_RE = re.compile(r"^(.+?)(?:\s*[-–—:]\s*|\s+)(\d+(?:[\.,]\d+)?)$")
 TABLE_RE = re.compile(r"^(?:стол|table)\s*[:#№-]?\s*(.+)$", re.IGNORECASE)
 COMMENT_PREFIX_RE = re.compile(r"^(?:комм|комментарий|comment)\s*:?\s*(.*)$", re.IGNORECASE)
 COMMENT_HINT_RE = re.compile(r"^(?:без|не|no)\b", re.IGNORECASE)
+COURSE_MARKER_RE = re.compile(r"^(?:к|курс|course)\s*([1-9]\d*)$|^([1-9]\d*)\s*(?:к|курс|course)$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
 class ParsedItem:
     quantity: Decimal
     name: str
+    course: int = 1
 
 
 @dataclass(frozen=True)
@@ -29,14 +31,23 @@ class ParsedOrder:
 
 def parse_order_text(text: str) -> ParsedOrder:
     lines = [line.strip() for line in text.replace("\r\n", "\n").split("\n")]
-    lines = [line for line in lines if line]
 
     table_number: str | None = None
     items: list[ParsedItem] = []
     comment_lines: list[str] = []
     in_comment = False
+    current_course = 1
+    blank_already_started_course = False
 
     for index, line in enumerate(lines):
+        if not line:
+            if items and not in_comment and not blank_already_started_course:
+                current_course += 1
+                blank_already_started_course = True
+            continue
+
+        blank_already_started_course = False
+
         if in_comment:
             comment_lines.append(line)
             continue
@@ -58,9 +69,14 @@ def parse_order_text(text: str) -> ParsedOrder:
             in_comment = True
             continue
 
+        course_marker = _parse_course_marker(line)
+        if course_marker is not None:
+            current_course = course_marker
+            continue
+
         parsed_item = _parse_item_line(line)
         if parsed_item:
-            items.append(parsed_item)
+            items.append(ParsedItem(quantity=parsed_item.quantity, name=parsed_item.name, course=current_course))
             continue
 
         if COMMENT_HINT_RE.match(line):
@@ -68,7 +84,7 @@ def parse_order_text(text: str) -> ParsedOrder:
             continue
 
         if _looks_like_order_context(lines, index, table_number, items):
-            items.append(ParsedItem(quantity=Decimal("1"), name=line))
+            items.append(ParsedItem(quantity=Decimal("1"), name=line, course=current_course))
             continue
 
         comment_lines.append(line)
@@ -86,7 +102,7 @@ def format_quantity(quantity: Decimal) -> str:
 
 def render_parsed_order(parsed: ParsedOrder) -> str:
     table = parsed.table_number or "не указан"
-    item_lines = "\n".join(f"• {format_item(item.name, item.quantity)}" for item in parsed.items)
+    item_lines = _render_items_by_course(parsed.items)
     comment = parsed.comment or "нет"
     return f"Стол: {table}\n\nПозиции:\n{item_lines}\n\nКомм:\n{comment}"
 
@@ -112,13 +128,32 @@ def _parse_item_line(line: str) -> ParsedItem | None:
     return None
 
 
+def _parse_course_marker(line: str) -> int | None:
+    normalized = line.strip().lower().replace("ё", "е")
+    word_markers = {
+        "первый курс": 1,
+        "первое": 1,
+        "первая подача": 1,
+        "второй курс": 2,
+        "второе": 2,
+        "вторая подача": 2,
+    }
+    if normalized in word_markers:
+        return word_markers[normalized]
+
+    match = COURSE_MARKER_RE.match(normalized)
+    if not match:
+        return None
+    return int(next(group for group in match.groups() if group))
+
+
 def _looks_like_order_context(lines: list[str], index: int, table_number: str | None, items: list[ParsedItem]) -> bool:
     if table_number or items:
         return True
     if len(lines) <= 1:
         return False
     remaining_lines = lines[index + 1 :]
-    return any(_parse_item_line(candidate) is not None or TABLE_RE.match(candidate) for candidate in remaining_lines)
+    return any(candidate and (_parse_item_line(candidate) is not None or TABLE_RE.match(candidate)) for candidate in remaining_lines)
 
 
 def _parse_quantity(raw: str) -> Decimal | None:
@@ -129,3 +164,19 @@ def _parse_quantity(raw: str) -> Decimal | None:
     if value <= 0:
         return None
     return value
+
+
+def _render_items_by_course(items: list[ParsedItem]) -> str:
+    if not items:
+        return "-"
+
+    lines: list[str] = []
+    current_course: int | None = None
+    for item in items:
+        if item.course != current_course:
+            if lines:
+                lines.append("")
+            current_course = item.course
+            lines.append(f"К{current_course}")
+        lines.append(f"• {format_item(item.name, item.quantity)}")
+    return "\n".join(lines)
