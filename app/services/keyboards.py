@@ -1,7 +1,11 @@
 from collections.abc import Iterable
+from math import ceil
 
 from app.models.constants import ITEM_READY, ROLE_ADMIN, ROLE_COOK, ROLE_WAITER
 from app.services.parser import format_item
+
+MAX_INLINE_KEYBOARD_ROWS = 6
+MAX_BUTTONS_PER_ROW = 5
 
 
 def inline_keyboard(rows: list[list[dict]]) -> dict:
@@ -70,17 +74,31 @@ def edit_mode_keyboard(order_id: str) -> dict:
     return inline_keyboard([[callback_button("Отмена", {"action": "cancel_edit_order", "order_id": order_id}, "negative")]])
 
 
+def _pack_buttons(buttons: list[dict], available_rows: int) -> list[list[dict]]:
+    if not buttons:
+        return []
+
+    row_size = max(1, ceil(len(buttons) / available_rows))
+    row_size = min(MAX_BUTTONS_PER_ROW, row_size)
+    return [buttons[index:index + row_size] for index in range(0, len(buttons), row_size)]
+
+
 def kitchen_order_keyboard(order_id: str, items: Iterable, include_cancel: bool = False) -> dict:
-    rows: list[list[dict]] = []
+    item_buttons: list[dict] = []
     for item in items:
         mark = "готово" if item.status == ITEM_READY else "не готово"
         color = "positive" if item.status == ITEM_READY else "secondary"
         label = f"К{getattr(item, 'course', 1) or 1} {mark}: {format_item(item.name, item.quantity)}"
-        rows.append([callback_button(label, {"action": "toggle_item_ready", "order_id": order_id, "item_id": item.id}, color)])
+        item_buttons.append(callback_button(label, {"action": "toggle_item_ready", "order_id": order_id, "item_id": item.id}, color))
 
-    rows.append([callback_button("Готово всё", {"action": "mark_order_ready", "order_id": order_id}, "positive")])
+    action_buttons = [callback_button("Готово всё", {"action": "mark_order_ready", "order_id": order_id}, "positive")]
     if include_cancel:
-        rows.append([callback_button("Отменить заказ", {"action": "cancel_order", "order_id": order_id}, "negative")])
+        action_buttons.append(callback_button("Отменить заказ", {"action": "cancel_order", "order_id": order_id}, "negative"))
+
+    available_item_rows = MAX_INLINE_KEYBOARD_ROWS - 1
+    max_item_buttons = available_item_rows * MAX_BUTTONS_PER_ROW
+    rows = _pack_buttons(item_buttons[:max_item_buttons], available_item_rows)
+    rows.append(action_buttons)
     return inline_keyboard(rows)
 
 

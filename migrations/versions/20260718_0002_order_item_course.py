@@ -15,7 +15,13 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("order_items", sa.Column("course", sa.Integer(), server_default="1", nullable=False))
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = {column["name"] for column in inspector.get_columns("order_items")}
+
+    if "course" not in columns:
+        op.add_column("order_items", sa.Column("course", sa.Integer(), server_default="1", nullable=False))
+
     op.alter_column("order_items", "course", server_default=None)
 
 
