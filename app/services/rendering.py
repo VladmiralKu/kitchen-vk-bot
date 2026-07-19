@@ -6,13 +6,21 @@ from app.services.parser import format_item, format_quantity
 
 
 def order_for_kitchen(order, timezone_name: str) -> str:
+    return order_for_kitchen_part(order, timezone_name, order.items, 1, 1)
+
+
+def order_for_kitchen_part(order, timezone_name: str, items: list, part_no: int, total_parts: int) -> str:
     created = _fmt_dt(order.created_at, timezone_name)
+    title = f"Заказ #{order.order_no or '...'} • стол {order.table_number or '-'}"
+    if total_parts > 1:
+        title = f"{title} • часть {part_no}/{total_parts}"
+
     lines = [
-        f"Заказ #{order.order_no or '...'} • стол {order.table_number or '-'}",
+        title,
         f"Создан: {created}",
         "",
     ]
-    lines.extend(_items_by_course(order.items, prefix_status=True))
+    lines.extend(_items_by_course(items, prefix_status=True))
     if order.comment:
         lines.extend(["", f"Комм: {order.comment}"])
     return "\n".join(lines)

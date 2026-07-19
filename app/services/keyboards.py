@@ -1,11 +1,10 @@
 from collections.abc import Iterable
-from math import ceil
 
 from app.models.constants import ITEM_READY, ROLE_ADMIN, ROLE_COOK, ROLE_WAITER
 from app.services.parser import format_item
 
 MAX_INLINE_KEYBOARD_ROWS = 6
-MAX_BUTTONS_PER_ROW = 5
+MAX_KITCHEN_ITEM_ROWS = MAX_INLINE_KEYBOARD_ROWS - 1
 
 
 def inline_keyboard(rows: list[list[dict]]) -> dict:
@@ -74,32 +73,40 @@ def edit_mode_keyboard(order_id: str) -> dict:
     return inline_keyboard([[callback_button("Отмена", {"action": "cancel_edit_order", "order_id": order_id}, "negative")]])
 
 
-def _pack_buttons(buttons: list[dict], available_rows: int) -> list[list[dict]]:
-    if not buttons:
-        return []
+def kitchen_item_chunks(items: Iterable) -> list[list]:
+    item_list = list(items)
+    if not item_list:
+        return [[]]
+    return [item_list[index:index + MAX_KITCHEN_ITEM_ROWS] for index in range(0, len(item_list), MAX_KITCHEN_ITEM_ROWS)]
 
-    row_size = max(1, ceil(len(buttons) / available_rows))
-    row_size = min(MAX_BUTTONS_PER_ROW, row_size)
-    return [buttons[index:index + row_size] for index in range(0, len(buttons), row_size)]
+
+def kitchen_order_keyboards(order_id: str, items: Iterable, include_cancel: bool = False) -> list[dict]:
+    chunks = kitchen_item_chunks(items)
+    keyboards: list[dict] = []
+    for chunk_index, chunk in enumerate(chunks):
+        rows = [[_item_button(order_id, item)] for item in chunk]
+        if chunk_index == len(chunks) - 1:
+            action_buttons = [callback_button("Готово всё", {"action": "mark_order_ready", "order_id": order_id}, "positive")]
+            if include_cancel:
+                action_buttons.append(callback_button("Отменить заказ", {"action": "cancel_order", "order_id": order_id}, "negative"))
+            rows.append(action_buttons)
+        keyboards.append(inline_keyboard(rows))
+    return keyboards
 
 
 def kitchen_order_keyboard(order_id: str, items: Iterable, include_cancel: bool = False) -> dict:
-    item_buttons: list[dict] = []
-    for item in items:
-        mark = "готово" if item.status == ITEM_READY else "не готово"
-        color = "positive" if item.status == ITEM_READY else "secondary"
-        label = f"К{getattr(item, 'course', 1) or 1} {mark}: {format_item(item.name, item.quantity)}"
-        item_buttons.append(callback_button(label, {"action": "toggle_item_ready", "order_id": order_id, "item_id": item.id}, color))
+    return kitchen_order_keyboards(order_id, items, include_cancel)[0]
 
-    action_buttons = [callback_button("Готово всё", {"action": "mark_order_ready", "order_id": order_id}, "positive")]
-    if include_cancel:
-        action_buttons.append(callback_button("Отменить заказ", {"action": "cancel_order", "order_id": order_id}, "negative"))
 
-    available_item_rows = MAX_INLINE_KEYBOARD_ROWS - 1
-    max_item_buttons = available_item_rows * MAX_BUTTONS_PER_ROW
-    rows = _pack_buttons(item_buttons[:max_item_buttons], available_item_rows)
-    rows.append(action_buttons)
-    return inline_keyboard(rows)
+def obsolete_order_keyboard() -> dict:
+    return inline_keyboard([[callback_button("Активные заказы", {"action": "show_orders"})]])
+
+
+def _item_button(order_id: str, item) -> dict:
+    mark = "готово" if item.status == ITEM_READY else "не готово"
+    color = "positive" if item.status == ITEM_READY else "secondary"
+    label = f"К{getattr(item, 'course', 1) or 1} {mark}: {format_item(item.name, item.quantity)}"
+    return callback_button(label, {"action": "toggle_item_ready", "order_id": order_id, "item_id": item.id}, color)
 
 
 def menu_keyboard(role: str) -> dict:
