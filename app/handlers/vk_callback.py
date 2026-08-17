@@ -23,6 +23,7 @@ from app.repositories import user_modes
 from app.repositories import users as users_repo
 from app.services.dispatch import broadcast_to_active_staff, notify_waiter_ready, refresh_kitchen_order_messages, send_order_to_kitchen
 from app.services.excel_export import create_export_file, parse_export_period
+from app.services.google_sheets_export import GoogleSheetsExportError, export_day_to_google_sheet
 from app.services.keyboards import confirm_order_keyboard, edit_mode_keyboard, edit_order_keyboard, main_keyboard
 from app.services.parser import format_quantity, parse_order_text
 from app.services.permissions import (
@@ -140,6 +141,9 @@ async def _handle_message_new(request: Request, payload: dict, session: AsyncSes
     elif command == "/export":
         await user_modes.clear_mode(session, user.id)
         await _cmd_export(request, session, settings, vk, peer_id, user, args)
+    elif command in {"/gsheet", "/gsheets", "/google"}:
+        await user_modes.clear_mode(session, user.id)
+        await _cmd_google_sheet(session, settings, vk, peer_id, user, args)
     elif command == "/stats":
         await user_modes.clear_mode(session, user.id)
         await _cmd_stats(session, settings, vk, peer_id, user, args)
@@ -338,6 +342,39 @@ async def _cmd_export(request: Request, session: AsyncSession, settings: Setting
     path = await create_export_file(session, period, settings.app_timezone)
     base_url = (settings.public_base_url or str(request.base_url)).rstrip("/")
     await vk.send_message(peer_id, f"Excel готов:\n{base_url}/exports/{path.name}")
+
+
+async def _cmd_google_sheet(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, args: list[str]) -> None:
+    if not can_export(actor):
+        await vk.send_message(peer_id, "Выгрузка в Google Таблицу доступна только админу.")
+        return
+    try:
+        selected_date = _parse_gsheet_date(args, settings.app_timezone)
+    except ValueError as exc:
+        await vk.send_message(peer_id, str(exc))
+        return
+
+    try:
+        result = await export_day_to_google_sheet(session, settings, selected_date)
+    except GoogleSheetsExportError as exc:
+        await vk.send_message(peer_id, f"Google Таблица не обновлена:\n{exc}")
+        return
+    except Exception:
+        logger.exception("Failed to export orders to Google Sheets")
+        await vk.send_message(peer_id, "Google Таблица не обновлена: внутренняя ошибка. Посмотрите логи сервера.")
+        return
+
+    await vk.send_message(
+        peer_id,
+        (
+            "Google Таблица обновлена.\n"
+            f"День: {result.day.strftime('%d.%m.%Y')}\n"
+            f"Лист: {result.sheet_title}\n"
+            f"Заказов: {result.orders_count}\n"
+            f"Строк позиций: {result.rows_count}\n"
+            f"{result.url}"
+        ),
+    )
 
 
 async def _cmd_stats(session: AsyncSession, settings: Settings, vk: VKClient, peer_id: int, actor, args: list[str]) -> None:
@@ -603,6 +640,28 @@ def _parse_done_date(args: list[str], timezone_name: str) -> date:
     raise ValueError("Не понял дату. Примеры: /done 2026-07-18 или /done 18.07.2026")
 
 
+def _parse_gsheet_date(args: list[str], timezone_name: str) -> date:
+    clean_args = [arg for arg in args if arg != "+"]
+    today = datetime.now(ZoneInfo(timezone_name)).date()
+    if not clean_args:
+        return date.fromordinal(today.toordinal() - 1)
+    if len(clean_args) != 1:
+        raise ValueError("Формат: /gsheet или /gsheet YYYY-MM-DD. Например: /gsheet 2026-08-16")
+
+    raw = clean_args[0].strip().lower()
+    if raw in {"today", "сегодня"}:
+        return today
+    if raw in {"yesterday", "вчера"}:
+        return date.fromordinal(today.toordinal() - 1)
+
+    for pattern in ("%Y-%m-%d", "%d.%m.%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(raw, pattern).date()
+        except ValueError:
+            pass
+    raise ValueError("Не понял дату. Примеры: /gsheet, /gsheet 2026-08-16 или /gsheet 16.08.2026")
+
+
 def _day_bounds_utc(day: date, timezone_name: str) -> tuple[datetime, datetime]:
     tz = ZoneInfo(timezone_name)
     start_local = datetime.combine(day, time.min, tzinfo=tz)
@@ -681,6 +740,7 @@ def _help_text(user) -> str:
         "Пустая строка после позиций начинает следующий курс: выше борщ и паста будут К1, десерт будет К2.\n"
         "Чтобы отредактировать активный заказ: /edit <номер заказа>.\n\n"
         "Выполненные заказы: /done или /done 2026-07-18.\n"
+        "Выгрузка в Google Таблицу, только админ: /gsheet или /gsheet 2026-08-16.\n"
         "Чтобы добавить стоп, нажмите Стопы и напишите текст обычным сообщением.\n"
         "Команда /help покажет эту подсказку снова."
     )

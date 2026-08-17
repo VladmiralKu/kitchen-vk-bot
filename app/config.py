@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     kitchen_peer_id: int | None = Field(default=None, alias="KITCHEN_PEER_ID")
     stops_ttl_hours: int = Field(default=12, alias="STOPS_TTL_HOURS")
     public_base_url: str | None = Field(default=None, alias="PUBLIC_BASE_URL")
+    google_sheets_spreadsheet_id: str = Field(default="", alias="GOOGLE_SHEETS_SPREADSHEET_ID")
+    google_service_account_file: str = Field(default="", alias="GOOGLE_SERVICE_ACCOUNT_FILE")
+    google_service_account_json: str = Field(default="", alias="GOOGLE_SERVICE_ACCOUNT_JSON")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     @property
