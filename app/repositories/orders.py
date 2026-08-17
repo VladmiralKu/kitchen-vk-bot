@@ -1,6 +1,4 @@
 from datetime import datetime, timezone
-from decimal import Decimal
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -23,7 +21,7 @@ from app.models.order_event import OrderEvent
 from app.models.order_item import OrderItem
 from app.models.user import User
 from app.services.order_status import derive_order_status, next_item_status
-from app.services.parser import ParsedItem, ParsedOrder
+from app.services.parser import ParsedOrder
 
 
 async def create_order(session: AsyncSession, waiter: User, parsed: ParsedOrder, raw_text: str) -> Order:
@@ -31,7 +29,7 @@ async def create_order(session: AsyncSession, waiter: User, parsed: ParsedOrder,
     session.add(order)
     await session.flush()
 
-    for index, parsed_item in enumerate(_expand_parsed_items(parsed.items), start=1):
+    for index, parsed_item in enumerate(parsed.items, start=1):
         session.add(
             OrderItem(
                 order_id=order.id,
@@ -61,7 +59,7 @@ async def update_order(session: AsyncSession, order: Order, actor: User, parsed:
         await session.delete(item)
     await session.flush()
 
-    for index, parsed_item in enumerate(_expand_parsed_items(parsed.items), start=1):
+    for index, parsed_item in enumerate(parsed.items, start=1):
         session.add(
             OrderItem(
                 order_id=order.id,
@@ -91,7 +89,7 @@ async def add_items_to_order(session: AsyncSession, order: Order, actor: User, p
     order.raw_text = f"{original_raw}\n\n{addition_raw}" if original_raw else addition_raw
 
     last_index = max((item.position_index for item in order.items), default=0)
-    for offset, parsed_item in enumerate(_expand_parsed_items(parsed.items), start=1):
+    for offset, parsed_item in enumerate(parsed.items, start=1):
         session.add(
             OrderItem(
                 order_id=order.id,
@@ -242,20 +240,3 @@ def role_label(role: str) -> str:
         ROLE_COOK: "повар",
         ROLE_WAITER: "официант",
     }.get(role, role)
-
-
-def _expand_parsed_items(items: list[ParsedItem]) -> list[ParsedItem]:
-    expanded: list[ParsedItem] = []
-    for item in items:
-        unit_count = _integer_unit_count(item.quantity)
-        if unit_count is None or unit_count <= 1:
-            expanded.append(item)
-            continue
-        expanded.extend(ParsedItem(quantity=Decimal("1"), name=item.name, course=item.course) for _ in range(unit_count))
-    return expanded
-
-
-def _integer_unit_count(quantity: Decimal) -> int | None:
-    if quantity <= 1 or quantity != quantity.to_integral_value():
-        return None
-    return int(quantity)
