@@ -71,8 +71,10 @@ def active_orders_list(orders: list) -> str:
         if not pending_items:
             continue
         visible_count += 1
-        lines.append(f"Заказ #{order.order_no}")
-        lines.extend(f"❌ К{_item_course(item)} {format_item(item.name, item.quantity)}" for item in pending_items)
+        waiter = _waiter_name(order)
+        lines.append(f"Заказ #{order.order_no}{f' {waiter}' if waiter else ''}")
+        labels = _item_display_labels(list(order.items))
+        lines.extend(f"❌ К{_item_course(item)} {labels[_item_identity(item)]}" for item in pending_items)
         lines.append("")
 
     if visible_count == 0:
@@ -115,6 +117,7 @@ def _item_course(item) -> int:
 
 def _items_by_course(items: list, prefix_status: bool = False) -> list[str]:
     lines: list[str] = []
+    labels = _item_display_labels(items)
     current_course: int | None = None
     for item in items:
         course = _item_course(item)
@@ -124,9 +127,35 @@ def _items_by_course(items: list, prefix_status: bool = False) -> list[str]:
             current_course = course
             lines.append(f"К{course}")
 
+        item_label = labels[_item_identity(item)]
         if prefix_status:
             mark = "готово" if item.status == ITEM_READY else "не готово"
-            lines.append(f"[{mark}] {format_item(item.name, item.quantity)}")
+            lines.append(f"[{mark}] {item_label}")
         else:
-            lines.append(f"• {format_item(item.name, item.quantity)}")
+            lines.append(f"• {item_label}")
     return lines
+
+
+def _item_display_labels(items: list) -> dict[str | int, str]:
+    grouped: dict[tuple[int, str], list] = {}
+    for item in items:
+        key = (_item_course(item), item.name.strip().lower())
+        grouped.setdefault(key, []).append(item)
+
+    labels: dict[str | int, str] = {}
+    for group in grouped.values():
+        should_number = len(group) > 1 and all(format_quantity(item.quantity) == "1" for item in group)
+        for index, item in enumerate(group, start=1):
+            labels[_item_identity(item)] = f"{index}-{item.name}" if should_number else format_item(item.name, item.quantity)
+    return labels
+
+
+def _item_identity(item) -> str | int:
+    return getattr(item, "id", id(item))
+
+
+def _waiter_name(order) -> str | None:
+    waiter = getattr(order, "waiter", None)
+    if waiter is None:
+        return None
+    return getattr(waiter, "display_name", None) or str(getattr(waiter, "vk_user_id", "")).strip() or None

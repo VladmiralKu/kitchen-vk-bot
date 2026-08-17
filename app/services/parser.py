@@ -3,10 +3,11 @@ from decimal import Decimal, InvalidOperation
 import re
 
 
-LEADING_QUANTITY_RE = re.compile(r"^(\d+(?:[\.,]\d+)?)\s+(.+)$")
-TRAILING_QUANTITY_RE = re.compile(r"^(.+?)(?:\s*[-–—:]\s*|\s+)(\d+(?:[\.,]\d+)?)$")
+QUANTITY_UNIT_PATTERN = r"(?:\s*(?:шт\.?|штук|pcs?|x))?"
+LEADING_QUANTITY_RE = re.compile(rf"^(\d+(?:[\.,]\d+)?){QUANTITY_UNIT_PATTERN}\s+(.+)$", re.IGNORECASE)
+TRAILING_QUANTITY_RE = re.compile(rf"^(.+?)(?:\s*[-–—:]\s*|\s+)(\d+(?:[\.,]\d+)?){QUANTITY_UNIT_PATTERN}$", re.IGNORECASE)
 TABLE_RE = re.compile(r"^(?:стол|table)\s*[:#№-]?\s*(.+)$", re.IGNORECASE)
-COMMENT_PREFIX_RE = re.compile(r"^(?:комм|комментарий|comment)\s*:?\s*(.*)$", re.IGNORECASE)
+COMMENT_PREFIX_RE = re.compile(r"^(?:комментарий|комм|comment)\s*:?\s*(.*)$", re.IGNORECASE)
 COMMENT_HINT_RE = re.compile(r"^(?:без|не|no)\b", re.IGNORECASE)
 COURSE_MARKER_RE = re.compile(r"^(?:к|курс|course)\s*([1-9]\d*)$|^([1-9]\d*)\s*(?:к|курс|course)$", re.IGNORECASE)
 COURSE_PREFIX_RE = re.compile(r"^(?:к|курс|course)\s*([1-9]\d*)\s+(.+)$|^([1-9]\d*)\s*(?:к|курс|course)\s+(.+)$", re.IGNORECASE)

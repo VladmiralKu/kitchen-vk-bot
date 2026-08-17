@@ -1,10 +1,10 @@
 from collections.abc import Iterable
 
 from app.models.constants import ITEM_READY, ROLE_ADMIN, ROLE_COOK, ROLE_WAITER
-from app.services.parser import format_item
+from app.services.parser import format_item, format_quantity
 
 MAX_INLINE_KEYBOARD_ROWS = 6
-MAX_KITCHEN_ITEM_ROWS = MAX_INLINE_KEYBOARD_ROWS - 1
+MAX_KITCHEN_ITEM_ROWS = MAX_INLINE_KEYBOARD_ROWS
 
 
 def inline_keyboard(rows: list[list[dict]]) -> dict:
@@ -74,22 +74,19 @@ def edit_mode_keyboard(order_id: str) -> dict:
 
 
 def kitchen_item_chunks(items: Iterable) -> list[list]:
-    item_list = list(items)
-    if not item_list:
-        return [[]]
-    return [item_list[index:index + MAX_KITCHEN_ITEM_ROWS] for index in range(0, len(item_list), MAX_KITCHEN_ITEM_ROWS)]
+    return _chunk_items(list(items), MAX_KITCHEN_ITEM_ROWS)
 
 
 def kitchen_order_keyboards(order_id: str, items: Iterable, include_cancel: bool = False) -> list[dict]:
-    chunks = kitchen_item_chunks(items)
+    item_list = list(items)
+    rows_reserved_for_actions = 1 if include_cancel else 0
+    chunks = _chunk_items(item_list, MAX_INLINE_KEYBOARD_ROWS - rows_reserved_for_actions)
+    labels = _item_labels(item_list)
     keyboards: list[dict] = []
     for chunk_index, chunk in enumerate(chunks):
-        rows = [[_item_button(order_id, item)] for item in chunk]
-        if chunk_index == len(chunks) - 1:
-            action_buttons = [callback_button("Готово всё", {"action": "mark_order_ready", "order_id": order_id}, "positive")]
-            if include_cancel:
-                action_buttons.append(callback_button("Отменить заказ", {"action": "cancel_order", "order_id": order_id}, "negative"))
-            rows.append(action_buttons)
+        rows = [[_item_button(order_id, item, labels[_item_identity(item)])] for item in chunk]
+        if include_cancel and chunk_index == len(chunks) - 1:
+            rows.append([callback_button("Отменить заказ", {"action": "cancel_order", "order_id": order_id}, "negative")])
         keyboards.append(inline_keyboard(rows))
     return keyboards
 
@@ -102,11 +99,35 @@ def obsolete_order_keyboard() -> dict:
     return inline_keyboard([[callback_button("Активные заказы", {"action": "show_orders"})]])
 
 
-def _item_button(order_id: str, item) -> dict:
+def _chunk_items(items: list, chunk_size: int) -> list[list]:
+    if not items:
+        return [[]]
+    return [items[index:index + chunk_size] for index in range(0, len(items), chunk_size)]
+
+
+def _item_button(order_id: str, item, item_label: str) -> dict:
     mark = "готово" if item.status == ITEM_READY else "не готово"
     color = "positive" if item.status == ITEM_READY else "secondary"
-    label = f"К{getattr(item, 'course', 1) or 1} {mark}: {format_item(item.name, item.quantity)}"
+    label = f"К{getattr(item, 'course', 1) or 1} {mark}: {item_label}"
     return callback_button(label, {"action": "toggle_item_ready", "order_id": order_id, "item_id": item.id}, color)
+
+
+def _item_labels(items: list) -> dict[str | int, str]:
+    grouped: dict[tuple[int, str], list] = {}
+    for item in items:
+        key = (int(getattr(item, "course", 1) or 1), item.name.strip().lower())
+        grouped.setdefault(key, []).append(item)
+
+    labels: dict[str | int, str] = {}
+    for group in grouped.values():
+        should_number = len(group) > 1 and all(format_quantity(item.quantity) == "1" for item in group)
+        for index, item in enumerate(group, start=1):
+            labels[_item_identity(item)] = f"{index}-{item.name}" if should_number else format_item(item.name, item.quantity)
+    return labels
+
+
+def _item_identity(item) -> str | int:
+    return getattr(item, "id", id(item))
 
 
 def menu_keyboard(role: str) -> dict:

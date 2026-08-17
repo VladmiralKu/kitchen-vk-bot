@@ -87,3 +87,12 @@ def test_inline_course_prefix_without_quantity_defaults_to_one():
     assert [(item.name, item.quantity, item.course) for item in parsed.items] == [
         ("медовик", Decimal("1"), 2),
     ]
+
+
+def test_parse_quantity_with_sht_suffix():
+    parsed = parse_order_text("Стол 4\nкапучино 2шт\n3 шт круассан")
+
+    assert [(item.quantity, item.name) for item in parsed.items] == [
+        (Decimal("2"), "капучино"),
+        (Decimal("3"), "круассан"),
+    ]
