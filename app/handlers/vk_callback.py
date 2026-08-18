@@ -191,7 +191,7 @@ async def _handle_message_event(request: Request, payload: dict, session: AsyncS
         await user_modes.clear_mode(session, user.id)
         await _cmd_users(session, vk, peer_id, user)
     elif action == "help_new_order":
-        await vk.send_message(peer_id, "Отправьте заказ обычным текстом, например:\nСтол 4\nборщ 2\nпаста 1\nкомм: без лука")
+        await vk.send_message(peer_id, "Отправьте заказ обычным текстом, например:\nСтол 4\n2 борщ\n1 паста\nкомм: без лука")
     elif action == "export_orders":
         await _cmd_export(request, session, settings, vk, peer_id, user, [action_payload.get("period", "today")])
     elif action == "send_order_to_kitchen":
@@ -489,8 +489,8 @@ async def _start_edit_order(session: AsyncSession, settings: Settings, vk: VKCli
             f"{_editable_order_text(order)}\n\n"
             "Если нужно только добавить позиции, напишите + и добавку.\n"
             "Пример:\n"
-            "+ чай - 1\n"
-            "+ К2 медовик - 1\n\n"
+            "+ 1 чай\n"
+            "+ К2 1 медовик\n\n"
             f"{_done_order_edit_hint(order)}"
             "Кнопка Отмена ниже выйдет без изменений."
         ),
@@ -550,7 +550,7 @@ async def _handle_edit_order_text(
         await vk.send_message(peer_id, f"Заказ #{order.order_no} уже закрыт. Редактирование отменено.", keyboard=main_keyboard(actor.role))
         return
     if order.status in DONE_ORDER_STATUSES and addition_text is None:
-        await vk.send_message(peer_id, "Готовый заказ можно только дополнить через +. Например: + чай - 1\nИли нажмите Отмена.")
+        await vk.send_message(peer_id, "Готовый заказ можно только дополнить через +. Например: + 1 чай\nИли нажмите Отмена.")
         return
 
     parsed = parse_order_text(addition_text or text)
@@ -710,7 +710,7 @@ def _editable_order_text(order) -> str:
                 lines.append("")
             current_course = course
             lines.append(f"К{course}")
-        lines.append(f"{item.name} - {format_quantity(item.quantity)}")
+        lines.append(f"{format_quantity(item.quantity)} {item.name}")
 
     if order.comment:
         if lines:
@@ -736,8 +736,9 @@ def _help_text(user) -> str:
     return (
         f"Ваша роль: {user.role}.\n\n"
         "Как внести заказ:\n"
-        "Стол 4\nборщ - 2\nпаста - 1\n\nдесерт\nкомм: без лука\n\n"
+        "Стол 4\n2 борщ\n1 паста\n\n1 десерт\nкомм: без лука\n\n"
         "Пустая строка после позиций начинает следующий курс: выше борщ и паста будут К1, десерт будет К2.\n"
+        "Если количество стоит перед названием, например 2 капучино, кухня получит две кнопки капучино.\n"
         "Чтобы отредактировать активный заказ: /edit <номер заказа>.\n\n"
         "Выполненные заказы: /done или /done 2026-07-18.\n"
         "Выгрузка в Google Таблицу, только админ: /gsheet или /gsheet 2026-08-16.\n"

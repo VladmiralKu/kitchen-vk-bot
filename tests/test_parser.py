@@ -22,6 +22,7 @@ def test_old_leading_quantity_format_still_works():
         (Decimal("2"), "борщ"),
         (Decimal("1"), "паста"),
     ]
+    assert parsed.items[0].split_units is True
     assert parsed.comment == "без лука"
 
 
@@ -95,4 +96,15 @@ def test_parse_quantity_with_sht_suffix():
     assert [(item.quantity, item.name) for item in parsed.items] == [
         (Decimal("2"), "капучино"),
         (Decimal("3"), "круассан"),
+    ]
+    assert parsed.items[0].split_units is False
+    assert parsed.items[1].split_units is True
+
+
+def test_number_in_item_name_is_not_quantity_when_unit_is_unknown():
+    parsed = parse_order_text("Стол 4\nчай 650гр\nчай 650")
+
+    assert [(item.quantity, item.name, item.split_units) for item in parsed.items] == [
+        (Decimal("1"), "чай 650гр", False),
+        (Decimal("1"), "чай 650", False),
     ]

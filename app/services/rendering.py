@@ -139,17 +139,16 @@ def _items_by_course(items: list, prefix_status: bool = False) -> list[str]:
 
 
 def _item_display_labels(items: list) -> dict[str | int, str]:
-    grouped: dict[tuple[int, str], list] = {}
-    for item in items:
-        key = (_item_course(item), item.name.strip().lower())
-        grouped.setdefault(key, []).append(item)
-
     labels: dict[str | int, str] = {}
-    for group in grouped.values():
-        should_number = len(group) > 1 and all(format_quantity(item.quantity) == "1" for item in group)
-        for index, item in enumerate(group, start=1):
-            labels[_item_identity(item)] = f"{index}-{item.name}" if should_number else format_item(item.name, item.quantity)
+    for item in items:
+        labels[_item_identity(item)] = _item_display_label(item)
     return labels
+
+
+def _item_display_label(item) -> str:
+    if format_quantity(item.quantity) == "1":
+        return item.name
+    return format_item(item.name, item.quantity)
 
 
 def _item_identity(item) -> str | int:

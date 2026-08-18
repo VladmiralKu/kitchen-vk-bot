@@ -5,12 +5,13 @@ import re
 
 QUANTITY_UNIT_PATTERN = r"(?:\s*(?:шт\.?|штук|pcs?|x))?"
 LEADING_QUANTITY_RE = re.compile(rf"^(\d+(?:[\.,]\d+)?){QUANTITY_UNIT_PATTERN}\s+(.+)$", re.IGNORECASE)
-TRAILING_QUANTITY_RE = re.compile(rf"^(.+?)(?:\s*[-–—:]\s*|\s+)(\d+(?:[\.,]\d+)?){QUANTITY_UNIT_PATTERN}$", re.IGNORECASE)
+TRAILING_QUANTITY_RE = re.compile(rf"^(.+?)(\s*[-–—:]\s*|\s+)(\d+(?:[\.,]\d+)?){QUANTITY_UNIT_PATTERN}$", re.IGNORECASE)
 TABLE_RE = re.compile(r"^(?:стол|table)\s*[:#№-]?\s*(.+)$", re.IGNORECASE)
 COMMENT_PREFIX_RE = re.compile(r"^(?:комментарий|комм|comment)\s*:?\s*(.*)$", re.IGNORECASE)
 COMMENT_HINT_RE = re.compile(r"^(?:без|не|no)\b", re.IGNORECASE)
 COURSE_MARKER_RE = re.compile(r"^(?:к|курс|course)\s*([1-9]\d*)$|^([1-9]\d*)\s*(?:к|курс|course)$", re.IGNORECASE)
 COURSE_PREFIX_RE = re.compile(r"^(?:к|курс|course)\s*([1-9]\d*)\s+(.+)$|^([1-9]\d*)\s*(?:к|курс|course)\s+(.+)$", re.IGNORECASE)
+MAX_TRAILING_SPACE_QUANTITY = Decimal("50")
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,7 @@ class ParsedItem:
     quantity: Decimal
     name: str
     course: int = 1
+    split_units: bool = False
 
 
 @dataclass(frozen=True)
@@ -81,14 +83,14 @@ def parse_order_text(text: str) -> ParsedOrder:
             current_course, line = course_prefix
             parsed_item = _parse_item_line(line)
             if parsed_item:
-                items.append(ParsedItem(quantity=parsed_item.quantity, name=parsed_item.name, course=current_course))
+                items.append(ParsedItem(quantity=parsed_item.quantity, name=parsed_item.name, course=current_course, split_units=parsed_item.split_units))
             elif line:
                 items.append(ParsedItem(quantity=Decimal("1"), name=line, course=current_course))
             continue
 
         parsed_item = _parse_item_line(line)
         if parsed_item:
-            items.append(ParsedItem(quantity=parsed_item.quantity, name=parsed_item.name, course=current_course))
+            items.append(ParsedItem(quantity=parsed_item.quantity, name=parsed_item.name, course=current_course, split_units=parsed_item.split_units))
             continue
 
         if COMMENT_HINT_RE.match(line):
@@ -120,14 +122,16 @@ def render_parsed_order(parsed: ParsedOrder) -> str:
 
 
 def format_item(name: str, quantity: Decimal) -> str:
-    return f"{name} {format_quantity(quantity)}"
+    return f"{format_quantity(quantity)} {name}"
 
 
 def _parse_item_line(line: str) -> ParsedItem | None:
     trailing_match = TRAILING_QUANTITY_RE.match(line)
     if trailing_match:
-        name, quantity_raw = trailing_match.groups()
+        name, separator, quantity_raw = trailing_match.groups()
         quantity = _parse_quantity(quantity_raw)
+        if quantity is not None and not separator.strip() and quantity > MAX_TRAILING_SPACE_QUANTITY:
+            return None
         if quantity is not None and name.strip():
             return ParsedItem(quantity=quantity, name=name.strip())
 
@@ -136,7 +140,7 @@ def _parse_item_line(line: str) -> ParsedItem | None:
         quantity_raw, name = leading_match.groups()
         quantity = _parse_quantity(quantity_raw)
         if quantity is not None and name.strip():
-            return ParsedItem(quantity=quantity, name=name.strip())
+            return ParsedItem(quantity=quantity, name=name.strip(), split_units=True)
     return None
 
 

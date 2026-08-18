@@ -36,7 +36,7 @@ def test_kitchen_order_keyboard_keeps_all_item_buttons_by_splitting() -> None:
     assert all(button["action"]["payload"]["action"] == "toggle_item_ready" for keyboard in keyboards for button in _flatten_buttons(keyboard))
 
 
-def test_kitchen_order_keyboard_numbers_duplicate_unit_buttons() -> None:
+def test_kitchen_order_keyboard_shows_duplicate_unit_buttons_without_numbering() -> None:
     items = [
         _item(1),
         _item(2),
@@ -47,5 +47,4 @@ def test_kitchen_order_keyboard_numbers_duplicate_unit_buttons() -> None:
     keyboards = kitchen_order_keyboards("order-1", items)
     labels = [button["action"]["label"] for button in _flatten_buttons(keyboards[0])]
 
-    assert "1-капучино" in labels[0]
-    assert "2-капучино" in labels[1]
+    assert labels == ["К1 не готово: капучино", "К1 не готово: капучино"]

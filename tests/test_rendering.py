@@ -21,12 +21,12 @@ def test_active_orders_list_shows_only_pending_items_without_tables():
 
     assert "Заказ #3 Аида" in text
     assert "стол" not in text
-    assert "❌ К1 капуч кокос 2" in text
-    assert "❌ К2 ламаджо 1" in text
+    assert "❌ К1 2 капуч кокос" in text
+    assert "❌ К2 ламаджо" in text
     assert "панкейки" not in text
 
 
-def test_active_orders_list_numbers_split_units():
+def test_active_orders_list_shows_duplicate_unit_items_without_numbering():
     order = SimpleNamespace(
         order_no=14,
         table_number="7",
@@ -40,8 +40,7 @@ def test_active_orders_list_numbers_split_units():
     text = active_orders_list([order])
 
     assert "Заказ #14 Аида" in text
-    assert "❌ К1 1-капучино" in text
-    assert "❌ К1 2-капучино" in text
+    assert text.count("❌ К1 капучино") == 2
 
 
 def test_done_orders_list_shows_waiter_name():
