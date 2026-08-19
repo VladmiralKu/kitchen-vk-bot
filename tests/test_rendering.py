@@ -58,4 +58,5 @@ def test_done_orders_list_shows_waiter_name():
 
     text = orders_list("Выполненные за сегодня", [order], "Europe/Kirov")
 
-    assert "#8 • Аида • стол 5" in text
+    assert "#8 • Аида • ready" in text
+    assert "стол" not in text

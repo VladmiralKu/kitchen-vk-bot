@@ -53,7 +53,7 @@ def orders_list(title: str, orders: list, timezone_name: str) -> str:
         items = ", ".join(f"К{_item_course(item)} {format_quantity(item.quantity)} {item.name}" for item in order.items)
         waiter = _waiter_name(order)
         waiter_part = f" • {waiter}" if waiter else ""
-        lines.append(f"#{order.order_no}{waiter_part} • стол {order.table_number or '-'} • {order.status} • {created}")
+        lines.append(f"#{order.order_no}{waiter_part} • {order.status} • {created}")
         lines.append(items)
         if order.total_ready_seconds:
             lines.append(f"Время выдачи: {round(order.total_ready_seconds / 60, 1)} мин")
