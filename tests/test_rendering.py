@@ -5,7 +5,7 @@ from app.models.constants import ITEM_PENDING, ITEM_READY
 from app.services.rendering import active_orders_list, orders_list
 
 
-def test_active_orders_list_shows_only_pending_items_without_tables():
+def test_active_orders_list_shows_waiter_and_table_with_pending_items():
     order = SimpleNamespace(
         order_no=3,
         table_number="2",
@@ -19,8 +19,7 @@ def test_active_orders_list_shows_only_pending_items_without_tables():
 
     text = active_orders_list([order])
 
-    assert "Заказ #3 Аида" in text
-    assert "стол" not in text
+    assert "Заказ #3 Аида • стол 2" in text
     assert "❌ К1 2 капуч кокос" in text
     assert "❌ К2 ламаджо" in text
     assert "панкейки" not in text
@@ -39,7 +38,7 @@ def test_active_orders_list_shows_duplicate_unit_items_without_numbering():
 
     text = active_orders_list([order])
 
-    assert "Заказ #14 Аида" in text
+    assert "Заказ #14 Аида • стол 7" in text
     assert text.count("❌ К1 капучино") == 2
 
 

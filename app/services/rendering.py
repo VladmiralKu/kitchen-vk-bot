@@ -74,7 +74,7 @@ def active_orders_list(orders: list) -> str:
             continue
         visible_count += 1
         waiter = _waiter_name(order)
-        lines.append(f"Заказ #{order.order_no}{f' {waiter}' if waiter else ''}")
+        lines.append(f"Заказ #{order.order_no}{f' {waiter}' if waiter else ''} • стол {order.table_number or '-'}")
         labels = _item_display_labels(list(order.items))
         lines.extend(f"❌ К{_item_course(item)} {labels[_item_identity(item)]}" for item in pending_items)
         lines.append("")
